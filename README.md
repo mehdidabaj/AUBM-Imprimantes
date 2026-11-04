@@ -14,6 +14,45 @@ Puis ouvrir [http://127.0.0.1:4173](http://127.0.0.1:4173).
 
 Les modifications (niveaux, ajouts, interventions) restent dans le navigateur (`localStorage`). Le bouton de restauration du journal remet le relevé d'origine.
 
+## Déployer sur Debian
+
+Le site est statique. Nginx le sert sur le port 80. Sur le serveur, en root ou avec `sudo` :
+
+```bash
+sudo apt update
+sudo apt install -y git
+sudo git clone -b cursor/gestion-imprimantes-e995 https://github.com/mehdidabaj/AUBM-Imprimantes.git /opt/aubm-imprimantes
+cd /opt/aubm-imprimantes
+sudo ./deploy/install-debian.sh
+```
+
+Une fois cette branche fusionnée dans `main`, le clone peut se faire sans `-b`.
+
+Le script installe Nginx, copie les fichiers dans `/var/www/aubm-imprimantes` et active le site. Avec le nom d'hôte par défaut, le port 80 du serveur affiche le parc. Pour un nom précis :
+
+```bash
+sudo ./deploy/install-debian.sh --server-name imprimantes.exemple.ma
+```
+
+Le nom doit pointer vers le serveur. Ouvrez ensuite `http://imprimantes.exemple.ma/`.
+
+Pour mettre à jour après un changement :
+
+```bash
+cd /opt/aubm-imprimantes
+sudo git pull
+sudo ./deploy/install-debian.sh --server-name imprimantes.exemple.ma
+```
+
+Si le pare-feu `ufw` est déjà actif, le script ouvre le profil « Nginx HTTP ». Les données saisies dans l'application ne sont pas sur le serveur : chaque navigateur garde son propre suivi.
+
+HTTPS, une fois le nom d'hôte en place :
+
+```bash
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d imprimantes.exemple.ma
+```
+
 ## Ce que l'on peut faire
 
 - Voir les machines à traiter (observation autre que RAS, ou consommable à 10 % ou moins) et celles à surveiller (jusqu'à 30 %).

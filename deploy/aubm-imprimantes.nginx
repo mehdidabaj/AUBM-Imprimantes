@@ -1,0 +1,33 @@
+# Site statique du parc d'imprimantes AUBM.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __SERVER_NAME__;
+
+    root /var/www/aubm-imprimantes;
+    index index.html;
+
+    access_log /var/log/nginx/aubm-imprimantes.access.log;
+    error_log /var/log/nginx/aubm-imprimantes.error.log;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+
+    location = /index.html {
+        add_header Cache-Control "no-cache";
+        add_header X-Content-Type-Options nosniff always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /js/ {
+        add_header Cache-Control "no-cache";
+    }
+
+    location /css/ {
+        add_header Cache-Control "no-cache";
+    }
+}
