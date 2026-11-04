@@ -166,7 +166,7 @@ function sidebarHtml() {
         </a>`).join("")}
     </nav>
     <div class="side-foot">
-      <p>Relevé importé du <strong>${esc(formatDate(RELEVE_DATE))}</strong></p>
+      <p>${state.printers.length ? `Relevé importé du <strong>${esc(formatDate(RELEVE_DATE))}</strong>` : "Parc vide"}</p>
       <p>${state.printers.length} machine${state.printers.length > 1 ? "s" : ""} suivie${state.printers.length > 1 ? "s" : ""}</p>
       <p>${esc(state.user.nom)} · ${esc(roleLabel(state.user.role))}</p>
     </div>`;
@@ -247,8 +247,8 @@ function dashboardHtml() {
   const depts = parDepartement(state.printers);
   const maxDept = Math.max(...depts.map((row) => row.total), 1);
   const urgences = trier(state.printers.filter((printer) => statut(printer) !== "ok"), { key: "niveau", dir: "asc" }).slice(0, 7);
-  return `
-    <section class="banner">
+  const banner = counts.total
+    ? `<section class="banner">
       <div>
         <p class="eyebrow">Snapshot du relevé</p>
         <h2>Les niveaux datent du ${esc(formatDate(RELEVE_DATE))}.</h2>
@@ -257,7 +257,19 @@ function dashboardHtml() {
           : "Le relevé est dans MySQL. Les fiches, les filtres et les exports restent disponibles. Les modifications du parc sont réservées aux administrateurs."}</p>
       </div>
       <a class="btn btn-primary" href="#/alertes">Voir les ${counts.critique} alertes</a>
-    </section>
+    </section>`
+    : `<section class="banner">
+      <div>
+        <p class="eyebrow">Parc vide</p>
+        <h2>Aucune imprimante pour le moment.</h2>
+        <p>${canManage()
+          ? "Ajoutez un département et ses emplacements, puis la première imprimante."
+          : "Le parc ne contient encore aucune machine."}</p>
+      </div>
+      ${canManage() ? `<a class="btn btn-primary" href="#/imprimante/nouveau">Ajouter une imprimante</a>` : ""}
+    </section>`;
+  return `
+    ${banner}
     <section class="kpis">
       ${kpi("Parc", counts.total, "machines", "parc", "")}
       ${kpi("À traiter", counts.critique, "critique", "statut", "critique")}
@@ -272,7 +284,7 @@ function dashboardHtml() {
       <article class="card">
         <header class="card-head"><h2>Par département</h2></header>
         <ul class="bars">
-          ${depts.map((row) => `
+          ${depts.length ? depts.map((row) => `
             <li>
               <button type="button" data-action="filter-dept" data-dept="${esc(row.dept)}">
                 <span>${esc(row.dept)}</span>
@@ -280,7 +292,7 @@ function dashboardHtml() {
                 <b>${row.alertes ? `${row.alertes} alerte${row.alertes > 1 ? "s" : ""}` : "RAS"}</b>
                 <small>${row.total}</small>
               </button>
-            </li>`).join("")}
+            </li>`).join("") : `<li class="empty">Aucun département.</li>`}
         </ul>
       </article>
     </section>
@@ -349,12 +361,12 @@ function resultsHtml() {
           </tr>
         </thead>
         <tbody>
-          ${rows.map(tableRow).join("") || `<tr><td colspan="7" class="empty">Aucune machine ne correspond.</td></tr>`}
+          ${rows.map(tableRow).join("") || `<tr><td colspan="7" class="empty">${state.printers.length ? "Aucune machine ne correspond." : "Le parc est vide."}</td></tr>`}
         </tbody>
       </table>
     </div>
     <ul class="cards">
-      ${rows.map(cardRow).join("") || `<li class="empty">Aucune machine ne correspond.</li>`}
+      ${rows.map(cardRow).join("") || `<li class="empty">${state.printers.length ? "Aucune machine ne correspond." : "Le parc est vide."}</li>`}
     </ul>`;
 }
 

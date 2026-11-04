@@ -516,12 +516,29 @@ def load_places(cur):
     return departements
 
 
+def mark_imported(cur):
+    cur.execute(
+        """
+        INSERT INTO etat (cle, valeur) VALUES ('importe', '1')
+        ON DUPLICATE KEY UPDATE valeur = '1'
+        """
+    )
+
+
+def already_imported(cur):
+    cur.execute("SELECT valeur FROM etat WHERE cle = 'importe'")
+    row = cur.fetchone()
+    return bool(row and row["valeur"] == "1")
+
+
 def seed_if_empty(conn):
     with conn.cursor() as cur:
-        cur.execute("SELECT COUNT(*) AS n FROM imprimantes")
-        if cur.fetchone()["n"]:
+        if already_imported(cur):
             return
-        insert_seed(cur)
+        cur.execute("SELECT COUNT(*) AS n FROM imprimantes")
+        if not cur.fetchone()["n"]:
+            insert_seed(cur)
+        mark_imported(cur)
 
 
 def public_user(row):

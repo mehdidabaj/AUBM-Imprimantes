@@ -74,6 +74,12 @@ CREATE TABLE IF NOT EXISTS utilisateurs (
     UNIQUE KEY uniq_identifiant (identifiant)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS etat (
+    cle VARCHAR(40) NOT NULL,
+    valeur VARCHAR(80) NOT NULL,
+    PRIMARY KEY (cle)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS journal (
     id INT UNSIGNED NOT NULL AUTO_INCREMENT,
     imprimante_id VARCHAR(40) NULL,

@@ -8,11 +8,12 @@ SITE_NAME="aubm-imprimantes"
 ENV_FILE="/etc/aubm-imprimantes.env"
 LISTEN_PORT="80"
 RESET_DATA=0
+VIDER=0
 NEW_ADMIN=0
 
 usage() {
   cat <<'EOF'
-Usage : sudo ./deploy/install-debian.sh [--server-name NOM] [--listen-port PORT] [--web-root CHEMIN] [--reset-data]
+Usage : sudo ./deploy/install-debian.sh [--server-name NOM] [--listen-port PORT] [--web-root CHEMIN] [--reset-data] [--vider]
 
 Installe Nginx, le serveur MySQL des dépôts Debian, charge le schéma,
 démarre l'API et publie le site. La base MySQL déjà présente (GLPI, par
@@ -22,6 +23,7 @@ exemple) est conservée : seule la base aubm_imprimantes est ajoutée.
   --listen-port PORT   Port du site (défaut : 80). Mettre 8080 si le port 80 sert déjà GLPI.
   --web-root CHEMIN    Dossier des fichiers (défaut : /var/www/aubm-imprimantes)
   --reset-data         Recharge le relevé du 4 juin 2025 et vide le journal
+  --vider              Efface imprimantes, toners, kits, journal, départements et emplacements. Les comptes restent.
 
 Exemple, serveur dont le port 80 est déjà pris par GLPI :
   sudo ./deploy/install-debian.sh --server-name 195.200.200.16 --listen-port 8080
@@ -54,6 +56,10 @@ while [[ $# -gt 0 ]]; do
       RESET_DATA=1
       shift
       ;;
+    --vider)
+      VIDER=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -65,6 +71,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "$RESET_DATA" -eq 1 && "$VIDER" -eq 1 ]]; then
+  echo "Choisissez une seule action : --reset-data ou --vider." >&2
+  exit 1
+fi
 
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "Lancez le script avec sudo." >&2
@@ -273,6 +284,17 @@ EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 SQL
 
+if [[ "$VIDER" -eq 1 ]]; then
+  mysql --protocol=socket -uroot --default-character-set=utf8mb4 "$AUBM_DB_NAME" <<'SQL'
+DELETE FROM journal;
+DELETE FROM imprimantes;
+DELETE FROM departements;
+INSERT INTO etat (cle, valeur) VALUES ('importe', '1')
+  ON DUPLICATE KEY UPDATE valeur = '1';
+SQL
+  echo "Parc, journal, départements et emplacements effacés. Les comptes sont conservés."
+fi
+
 python3 -m py_compile "$ROOT/server/app.py"
 
 install -d -o www-data -g www-data -m 755 "$WEB_ROOT" "$WEB_ROOT/css" "$WEB_ROOT/js"
@@ -445,7 +467,10 @@ Parc imprimantes installé.
 Les fiches, les toners, les kits et les observations sont dans la base ${AUBM_DB_NAME}.
 Les autres bases MySQL du serveur, dont celle de GLPI, ne sont pas modifiées.
 Deux profils : administrateur (gestion complète et comptes) et consultation (lecture, filtres, export).
-Une réinstallation conserve la base et les comptes. Pour revenir au relevé du 4 juin 2025 :
+Une réinstallation conserve la base et les comptes.
+Pour vider le parc, le journal et les départements sans toucher aux comptes :
+  sudo ${ROOT}/deploy/install-debian.sh --listen-port ${LISTEN_PORT} --vider
+Pour revenir au relevé du 4 juin 2025 :
   sudo ${ROOT}/deploy/install-debian.sh --listen-port ${LISTEN_PORT} --reset-data
 EOF
 

@@ -48,7 +48,15 @@ sudo git pull
 sudo ./deploy/install-debian.sh --server-name 195.200.200.16 --listen-port 8080
 ```
 
-Contrôle : `curl -s http://127.0.0.1:8080/api/health` doit répondre `"ok": true`. Pour recharger le relevé du 4 juin 2025 : `sudo ./deploy/install-debian.sh --server-name 195.200.200.16 --listen-port 8080 --reset-data`. Gardez `--listen-port 8080` à chaque relance, afin de laisser le port 80 à GLPI.
+Contrôle : `curl -s http://127.0.0.1:8080/api/health` doit répondre `"ok": true`. Pour effacer le parc, le journal, les départements et les emplacements, tout en gardant les comptes :
+
+```bash
+cd /opt/aubm-imprimantes
+sudo git pull
+sudo ./deploy/install-debian.sh --server-name 195.200.200.16 --listen-port 8080 --vider
+```
+
+Le relevé du 4 juin 2025 ne revient pas au redémarrage. Pour le recharger : `sudo ./deploy/install-debian.sh --server-name 195.200.200.16 --listen-port 8080 --reset-data`. Gardez `--listen-port 8080` à chaque relance, afin de laisser le port 80 à GLPI.
 
 Le mot de passe du compte MySQL `aubm` est créé dans `/etc/aubm-imprimantes.env` (lecture root et www-data). Une réinstallation le réutilise et conserve les fiches déjà saisies.
 
