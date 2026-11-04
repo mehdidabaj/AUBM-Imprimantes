@@ -16,7 +16,7 @@ sudo ./deploy/install-debian.sh
 
 Une fois cette branche fusionnée dans `main`, le clone peut se faire sans `-b`.
 
-Le script installe Nginx, le serveur MySQL des dépôts Debian (paquet `default-mysql-server`), charge le schéma, importe le relevé si la base est vide, et démarre l'API (`aubm-imprimantes`, port local 8765). Nginx publie le site sur le port 80 et relaie `/api/`.
+Le script installe Nginx, le serveur MySQL des dépôts Debian (paquet `default-mysql-server`), charge le schéma, importe le relevé si la base est vide, et démarre l'API (`aubm-imprimantes`, port local 8765). Nginx publie le site et relaie `/api/`.
 
 Avec le nom d'hôte par défaut, le port 80 du serveur affiche le parc. Pour un nom précis :
 
@@ -26,14 +26,46 @@ sudo ./deploy/install-debian.sh --server-name imprimantes.exemple.ma
 
 Le nom doit pointer vers le serveur. Ouvrez ensuite `http://imprimantes.exemple.ma/`.
 
+## Serveur qui héberge déjà GLPI
+
+GLPI garde le port 80 et sa base MySQL. Le parc écoute sur le port 8080 et utilise une base séparée, `aubm_imprimantes`. Sur `195.200.200.16` :
+
+```bash
+sudo apt update
+sudo apt install -y git
+sudo git clone -b cursor/gestion-imprimantes-e995 https://github.com/mehdidabaj/AUBM-Imprimantes.git /opt/aubm-imprimantes
+cd /opt/aubm-imprimantes
+sudo ./deploy/install-debian.sh --server-name 195.200.200.16 --listen-port 8080
+```
+
+Ouvrez ensuite [http://195.200.200.16:8080/](http://195.200.200.16:8080/). GLPI reste sur [http://195.200.200.16/](http://195.200.200.16/).
+
+Si le dépôt est déjà cloné :
+
+```bash
+cd /opt/aubm-imprimantes
+sudo git pull
+sudo ./deploy/install-debian.sh --server-name 195.200.200.16 --listen-port 8080
+```
+
+Contrôle : `curl -s http://127.0.0.1:8080/api/health` doit répondre `"ok": true`. Pour recharger le relevé du 4 juin 2025 : `sudo ./deploy/install-debian.sh --server-name 195.200.200.16 --listen-port 8080 --reset-data`. Gardez `--listen-port 8080` à chaque relance, afin de laisser le port 80 à GLPI.
+
 Le mot de passe du compte `aubm` est créé dans `/etc/aubm-imprimantes.env` (lecture root et www-data). Une réinstallation le réutilise et conserve les fiches déjà saisies.
 
-Pour mettre à jour après un changement :
+Pour mettre à jour après un changement, relancez le script avec les mêmes options. Sur un serveur sans GLPI :
 
 ```bash
 cd /opt/aubm-imprimantes
 sudo git pull
 sudo ./deploy/install-debian.sh --server-name imprimantes.exemple.ma
+```
+
+Sur `195.200.200.16`, où GLPI occupe le port 80, gardez le port 8080 :
+
+```bash
+cd /opt/aubm-imprimantes
+sudo git pull
+sudo ./deploy/install-debian.sh --server-name 195.200.200.16 --listen-port 8080
 ```
 
 Pour revenir au relevé du 4 juin 2025 et vider le journal :

@@ -1,7 +1,7 @@
 # Parc d'imprimantes AUBM : fichiers statiques et proxy vers l'API MySQL.
 server {
-    listen 80;
-    listen [::]:80;
+    listen __LISTEN_PORT__;
+    listen [::]:__LISTEN_PORT__;
     server_name __SERVER_NAME__;
 
     root __WEB_ROOT__;

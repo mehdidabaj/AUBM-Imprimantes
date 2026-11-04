@@ -6,22 +6,29 @@ SERVER_NAME="_"
 WEB_ROOT="/var/www/aubm-imprimantes"
 SITE_NAME="aubm-imprimantes"
 ENV_FILE="/etc/aubm-imprimantes.env"
+LISTEN_PORT="80"
 RESET_DATA=0
 
 usage() {
   cat <<'EOF'
-Usage : sudo ./deploy/install-debian.sh [--server-name NOM] [--web-root CHEMIN] [--reset-data]
+Usage : sudo ./deploy/install-debian.sh [--server-name NOM] [--listen-port PORT] [--web-root CHEMIN] [--reset-data]
 
 Installe Nginx, le serveur MySQL des dépôts Debian, charge le schéma,
-démarre l'API et publie le site.
+démarre l'API et publie le site. La base MySQL déjà présente (GLPI, par
+exemple) est conservée : seule la base aubm_imprimantes est ajoutée.
 
-  --server-name NOM   Nom d'hôte Nginx (défaut : _, tout le port 80)
-  --web-root CHEMIN   Dossier des fichiers (défaut : /var/www/aubm-imprimantes)
-  --reset-data        Recharge le relevé du 4 juin 2025 et vide le journal
+  --server-name NOM    Nom d'hôte Nginx (défaut : _, tout le port choisi)
+  --listen-port PORT   Port du site (défaut : 80). Mettre 8080 si le port 80 sert déjà GLPI.
+  --web-root CHEMIN    Dossier des fichiers (défaut : /var/www/aubm-imprimantes)
+  --reset-data         Recharge le relevé du 4 juin 2025 et vide le journal
 
-Exemple :
-  sudo ./deploy/install-debian.sh --server-name imprimantes.exemple.ma
+Exemple, serveur dont le port 80 est déjà pris par GLPI :
+  sudo ./deploy/install-debian.sh --server-name 195.200.200.16 --listen-port 8080
 EOF
+}
+
+port_holders() {
+  ss -H -ltnp "sport = :$1" 2>/dev/null || true
 }
 
 escape_sed() {
@@ -36,6 +43,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --web-root)
       WEB_ROOT="${2:-}"
+      shift 2
+      ;;
+    --listen-port)
+      LISTEN_PORT="${2:-}"
       shift 2
       ;;
     --reset-data)
@@ -67,6 +78,25 @@ fi
 if [[ "$SERVER_NAME" == *" "* || "$WEB_ROOT" == *" "* ]]; then
   echo "Le nom d'hôte et le dossier web ne doivent pas contenir d'espace." >&2
   exit 1
+fi
+
+if [[ ! "$LISTEN_PORT" =~ ^[0-9]+$ ]] || [[ "$LISTEN_PORT" -lt 1 || "$LISTEN_PORT" -gt 65535 ]]; then
+  echo "Le port d'écoute est invalide." >&2
+  exit 1
+fi
+
+HOLDERS_80="$(port_holders 80)"
+if [[ "$LISTEN_PORT" == "80" && -n "$HOLDERS_80" ]]; then
+  OURS_LISTEN=""
+  if [[ -f /etc/nginx/sites-available/aubm-imprimantes ]]; then
+    OURS_LISTEN="$(grep -E '^[[:space:]]*listen ' /etc/nginx/sites-available/aubm-imprimantes | head -1 || true)"
+  fi
+  if [[ ! "$OURS_LISTEN" =~ listen[[:space:]]+80(;|[[:space:]]) ]]; then
+    echo "Le port 80 est déjà utilisé. GLPI peut rester en place." >&2
+    echo "Relancez avec un autre port, par exemple :" >&2
+    echo "  sudo $0 --server-name ${SERVER_NAME} --listen-port 8080" >&2
+    exit 1
+  fi
 fi
 
 if [[ ! -r /etc/os-release ]]; then
@@ -104,7 +134,14 @@ done
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y nginx default-mysql-server python3 python3-flask python3-pymysql curl openssl
+apt-get install -y default-mysql-server python3 python3-flask python3-pymysql curl openssl iproute2
+# Si Apache occupe déjà le port 80 pour GLPI, le premier démarrage de Nginx peut échouer.
+# La configuration posée plus bas n'écoute alors que sur le port demandé.
+apt-get install -y nginx || true
+if ! command -v nginx >/dev/null 2>&1; then
+  echo "Nginx n'a pas pu être installé." >&2
+  exit 1
+fi
 
 if [[ ! -f "$ENV_FILE" ]]; then
   PASS="Aubm_$(openssl rand -hex 16)"
@@ -138,6 +175,10 @@ if [[ ! "$AUBM_DB_NAME" =~ ^[A-Za-z0-9_]+$ || ! "$AUBM_DB_USER" =~ ^[A-Za-z0-9_]
 fi
 if [[ ! "$AUBM_PORT" =~ ^[0-9]+$ ]]; then
   echo "AUBM_PORT est invalide." >&2
+  exit 1
+fi
+if [[ "$LISTEN_PORT" == "$AUBM_PORT" ]]; then
+  echo "Le port du site et le port de l'API doivent être différents." >&2
   exit 1
 fi
 
@@ -202,18 +243,33 @@ sed \
   -e "s|__SERVER_NAME__|$(escape_sed "$SERVER_NAME")|g" \
   -e "s|__WEB_ROOT__|$(escape_sed "$WEB_ROOT")|g" \
   -e "s|__API_PORT__|$(escape_sed "$AUBM_PORT")|g" \
+  -e "s|__LISTEN_PORT__|$(escape_sed "$LISTEN_PORT")|g" \
   "$ROOT/deploy/aubm-imprimantes.nginx" > "$AVAILABLE"
 ln -sfn "$AVAILABLE" "$ENABLED"
 
-if [[ "$SERVER_NAME" == "_" && -e /etc/nginx/sites-enabled/default ]]; then
+if [[ "$LISTEN_PORT" == "80" && "$SERVER_NAME" == "_" && -e /etc/nginx/sites-enabled/default ]]; then
   rm -f /etc/nginx/sites-enabled/default
   echo "Site Nginx par défaut retiré : le port 80 sert le parc d'imprimantes."
+fi
+
+# Apache (GLPI) garde le port 80. Le site d'accueil livré avec Nginx l'occuperait aussi
+# et empêcherait Nginx de démarrer. On retire seulement ce site d'accueil.
+if [[ "$LISTEN_PORT" != "80" && -e /etc/nginx/sites-enabled/default ]]; then
+  HOLDERS_80="$(port_holders 80)"
+  if [[ -n "$HOLDERS_80" && ! "$HOLDERS_80" =~ nginx ]]; then
+    rm -f /etc/nginx/sites-enabled/default
+    echo "Site d'accueil Nginx retiré. Le port 80 reste au service déjà en place."
+  fi
 fi
 
 nginx -t
 if [[ -d /run/systemd/system ]]; then
   systemctl enable nginx
-  systemctl restart nginx
+  if systemctl is-active --quiet nginx; then
+    systemctl reload nginx
+  else
+    systemctl restart nginx
+  fi
 elif pgrep -x nginx >/dev/null 2>&1; then
   nginx -s reload
 else
@@ -272,22 +328,30 @@ if [[ "$RESET_DATA" -eq 1 ]]; then
   echo "Relevé du 4 juin 2025 rechargé. Le journal a été vidé."
 fi
 
-if ! curl -fsS "http://127.0.0.1/api/health" >/dev/null; then
-  echo "Nginx ne relaie pas /api/." >&2
+if ! curl -fsS "http://127.0.0.1:${LISTEN_PORT}/api/health" >/dev/null; then
+  echo "Nginx ne relaie pas /api/ sur le port ${LISTEN_PORT}." >&2
   exit 1
 fi
 
 COUNT="$(curl -fsS "http://127.0.0.1:${AUBM_PORT}/api/printers" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["printers"]))')"
 
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
-  ufw allow 'Nginx HTTP' || true
+  if [[ "$LISTEN_PORT" == "80" ]]; then
+    ufw allow 'Nginx HTTP' || true
+  else
+    ufw allow "${LISTEN_PORT}/tcp" || true
+  fi
 fi
 
 ADDRESS="$(hostname -I 2>/dev/null | awk '{print $1}')"
+HOST_SHOWN="$SERVER_NAME"
 if [[ "$SERVER_NAME" == "_" ]]; then
-  URL="http://${ADDRESS:-<adresse-ip>}/"
+  HOST_SHOWN="${ADDRESS:-<adresse-ip>}"
+fi
+if [[ "$LISTEN_PORT" == "80" ]]; then
+  URL="http://${HOST_SHOWN}/"
 else
-  URL="http://${SERVER_NAME}/"
+  URL="http://${HOST_SHOWN}:${LISTEN_PORT}/"
 fi
 
 cat <<EOF
@@ -302,7 +366,8 @@ Parc imprimantes installé.
   Imprimantes en base : ${COUNT}
   Adresse : ${URL}
 
-Les fiches, les toners, les kits et les observations sont dans MySQL, partagés par tous les postes.
+Les fiches, les toners, les kits et les observations sont dans la base ${AUBM_DB_NAME}.
+Les autres bases MySQL du serveur, dont celle de GLPI, ne sont pas modifiées.
 Une réinstallation conserve la base. Pour revenir au relevé du 4 juin 2025 :
-  sudo ${ROOT}/deploy/install-debian.sh --reset-data
+  sudo ${ROOT}/deploy/install-debian.sh --listen-port ${LISTEN_PORT} --reset-data
 EOF
