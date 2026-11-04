@@ -567,7 +567,8 @@ function ficheHtml(id) {
     ${printer.ecart ? `<p class="callout">Sur le relevé du 4 juin 2025, le texte des toners et les colonnes de pourcentages ne disent pas la même chose. Les niveaux ci-dessous sont ceux des colonnes. Le texte d'origine reste visible plus bas.</p>` : ""}
     ${manage ? "" : `<p class="callout">Consultation seule. Les modifications du parc sont réservées aux administrateurs.</p>`}
     <form id="printer-form" data-id="${esc(printer.id || "")}">
-      <fieldset class="plain fiche-grid" ${manage ? "" : "disabled"}>
+      <fieldset class="plain" ${manage ? "" : "disabled"}>
+      <div class="fiche-grid">
       <section class="card">
         <h2>Niveaux</h2>
         <p class="hint">${creating || !printer.niveauxLe ? "Saisissez les pourcentages connus." : `Dernière lecture : ${esc(formatDate(printer.niveauxLe))}.`} Laissez vide ce qui ne concerne pas la machine.</p>
@@ -619,6 +620,7 @@ function ficheHtml(id) {
           ${creating ? `<a class="btn" href="#/parc">Annuler</a>` : (manage ? `<button class="btn danger" type="button" data-action="delete" data-id="${esc(printer.id)}">Supprimer</button>` : "")}
         </div>
       </section>
+      </div>
       </fieldset>
     </form>
     ${creating || !manage ? "" : interventionHtml(printer, history)}`;
@@ -1230,12 +1232,17 @@ function onClick(event) {
     return;
   }
   if (action === "add-toner") {
+    event.preventDefault();
     if (!canManage()) return;
     const swatch = TONER_SWATCHES[document.querySelectorAll(".toner-row").length % TONER_SWATCHES.length];
-    document.getElementById("toners").insertAdjacentHTML("beforeend", tonerRow("", "", uid("ton"), swatch));
+    const list = document.getElementById("toners");
+    if (!list) return;
+    list.insertAdjacentHTML("beforeend", tonerRow("", "", uid("ton"), swatch));
+    list.lastElementChild?.querySelector("[name=tonerLabel]")?.focus();
     return;
   }
   if (action === "remove-toner") {
+    event.preventDefault();
     actionNode.closest(".toner-row")?.remove();
     return;
   }
@@ -1275,11 +1282,16 @@ function onClick(event) {
     return;
   }
   if (action === "add-kit") {
+    event.preventDefault();
     if (!canManage()) return;
-    document.getElementById("kits").insertAdjacentHTML("beforeend", kitRow("", null));
+    const list = document.getElementById("kits");
+    if (!list) return;
+    list.insertAdjacentHTML("beforeend", kitRow("", null));
+    list.lastElementChild?.querySelector("[name=kitLabel]")?.focus();
     return;
   }
   if (action === "remove-kit") {
+    event.preventDefault();
     actionNode.closest(".kit-row")?.remove();
     return;
   }
