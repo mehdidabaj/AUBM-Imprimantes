@@ -1,10 +1,9 @@
-import { PRINTERS, RELEVE_DATE } from "./data.js";
 import {
   esc, isLocal, isAntenne, tonerLevels, kitLevels, statut, statutLabel,
   motifs, fabricant, filtrer, trier, parDepartement, resume, toCsv, formatDate,
 } from "./logic.js";
 
-const STORAGE_KEY = "aubm-imprimantes-v1";
+const RELEVE_DATE = "2025-06-04";
 
 const INTERVENTION_TYPES = [
   ["toner-noir", "Remplacement toner noir"],
@@ -19,32 +18,50 @@ const INTERVENTION_TYPES = [
 const state = {
   printers: [],
   journal: [],
+  loading: true,
+  error: "",
+  busy: false,
   filters: { q: "", dept: "", statut: "", couleur: "", lien: "", lieu: "", marque: "" },
   sort: { key: "statut", dir: "asc" },
   toast: "",
 };
 
-function load() {
+async function api(path, { method = "GET", body } = {}) {
+  let response;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return fresh();
-    const data = JSON.parse(raw);
-    if (!Array.isArray(data.printers) || !data.printers.length) return fresh();
-    return { printers: data.printers, journal: Array.isArray(data.journal) ? data.journal : [] };
+    response = await fetch(path, {
+      method,
+      headers: {
+        Accept: "application/json",
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
   } catch {
-    return fresh();
+    throw new Error("Impossible de joindre le serveur.");
   }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "L'enregistrement a été refusé.");
+  return data;
 }
 
-function fresh() {
-  return {
-    printers: PRINTERS.map((printer) => ({ ...printer, kits: printer.kits.map((kit) => ({ ...kit })), extra: printer.extra?.map((item) => ({ ...item })) || null, niveauxLe: RELEVE_DATE })),
-    journal: [],
-  };
+async function refresh() {
+  const [printers, journal] = await Promise.all([
+    api("/api/printers"),
+    api("/api/journal"),
+  ]);
+  if (!Array.isArray(printers.printers) || !Array.isArray(journal.entries)) {
+    throw new Error("Réponse du serveur inattendue.");
+  }
+  state.printers = printers.printers;
+  state.journal = journal.entries;
+  state.error = "";
 }
 
-function persist() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ printers: state.printers, journal: state.journal }));
+function replacePrinter(printer) {
+  const index = state.printers.findIndex((item) => item.id === printer.id);
+  if (index === -1) state.printers.push(printer);
+  else state.printers[index] = printer;
 }
 
 function uid(prefix) {
@@ -62,14 +79,6 @@ function route() {
 
 function printerById(id) {
   return state.printers.find((printer) => printer.id === id) || null;
-}
-
-function log(entry) {
-  state.journal.unshift({
-    id: uid("log"),
-    at: new Date().toISOString(),
-    ...entry,
-  });
 }
 
 function toast(message) {
@@ -153,6 +162,12 @@ function topbarHtml() {
 }
 
 function viewHtml() {
+  if (state.loading) {
+    return `<section class="card empty-block"><h2>Chargement du parc…</h2><p>Lecture de la base MySQL.</p></section>`;
+  }
+  if (state.error) {
+    return `<section class="card empty-block"><h2>Base indisponible</h2><p>${esc(state.error)}</p><button class="btn" type="button" data-action="retry">Réessayer</button></section>`;
+  }
   const current = route();
   if (current.name === "tableau") return dashboardHtml();
   if (current.name === "parc") return parcHtml();
@@ -171,7 +186,7 @@ function dashboardHtml() {
       <div>
         <p class="eyebrow">Snapshot du relevé</p>
         <h2>Les niveaux datent du ${esc(formatDate(RELEVE_DATE))}.</h2>
-        <p>Le tableau Excel a été repris ici. Corrigez un toner ou notez un remplacement : la fiche est enregistrée dans ce navigateur.</p>
+        <p>Le relevé est dans MySQL. Ajoutez une imprimante, ses toners et leurs pourcentages, les kits s'il y en a, puis l'observation : la fiche est enregistrée sur le serveur.</p>
       </div>
       <a class="btn btn-primary" href="#/alertes">Voir les ${counts.critique} alertes</a>
     </section>
@@ -508,7 +523,7 @@ function interventionHtml(printer, history) {
   return `<section class="split">
     <form id="intervention-form" class="card" data-id="${esc(printer.id)}">
       <h2>Enregistrer une intervention</h2>
-      <p class="hint">L'action est appliquée tout de suite sur la fiche enregistrée.</p>
+      <p class="hint">L'intervention est enregistrée dans MySQL et appliquée à la fiche.</p>
       <label class="field">Type
         <select name="type">${INTERVENTION_TYPES.map(([value, label]) => `<option value="${value}">${esc(label)}</option>`).join("")}</select>
       </label>
@@ -600,7 +615,8 @@ function clamp(value, fallback = 0) {
   return Math.max(0, Math.min(100, Math.round(number)));
 }
 
-function savePrinter(form) {
+async function savePrinter(form) {
+  if (state.busy) return;
   const id = form.dataset.id;
   const previous = id ? printerById(id) : null;
   const result = readPrinter(form, previous);
@@ -611,39 +627,50 @@ function savePrinter(form) {
     return;
   }
   error.hidden = true;
-  if (previous) {
-    const index = state.printers.findIndex((printer) => printer.id === previous.id);
-    state.printers[index] = result.printer;
-    log({
-      printerId: result.printer.id,
-      printerNom: result.printer.nom,
+  const journal = previous
+    ? {
       type: "mise-a-jour",
-      typeLabel: "Mise à jour de la fiche",
       detail: result.changed ? "Niveaux ou kits modifiés." : "Informations modifiées.",
-    });
-  } else {
-    state.printers.push(result.printer);
-    log({
-      printerId: result.printer.id,
-      printerNom: result.printer.nom,
+    }
+    : {
       type: "creation",
-      typeLabel: "Ajout au parc",
       detail: `${result.printer.emplacement} · ${result.printer.departement}`,
+    };
+  state.busy = true;
+  try {
+    const saved = await api(previous ? `/api/printers/${encodeURIComponent(previous.id)}` : "/api/printers", {
+      method: previous ? "PUT" : "POST",
+      body: { printer: result.printer, journal },
     });
+    replacePrinter(saved.printer);
+    state.journal.unshift(saved.entry);
+    toast(previous ? "Fiche enregistrée." : "Imprimante ajoutée au parc.");
+    location.hash = `#/imprimante/${saved.printer.id}`;
+    paint();
+  } catch (err) {
+    error.hidden = false;
+    error.textContent = err.message;
+  } finally {
+    state.busy = false;
   }
-  persist();
-  toast(previous ? "Fiche enregistrée." : "Imprimante ajoutée au parc.");
-  location.hash = `#/imprimante/${result.printer.id}`;
-  paint();
 }
 
-function applyIntervention(form) {
+function clonePrinter(printer) {
+  return {
+    ...printer,
+    kits: (printer.kits || []).map((kit) => ({ ...kit })),
+    extra: printer.extra ? printer.extra.map((item) => ({ ...item })) : null,
+  };
+}
+
+async function applyIntervention(form) {
+  if (state.busy) return;
   const printer = printerById(form.dataset.id);
   if (!printer) return;
   const data = new FormData(form);
   const type = String(data.get("type"));
   const detail = String(data.get("detail") || "").trim();
-  const label = INTERVENTION_TYPES.find(([value]) => value === type)?.[1] || type;
+  const next = clonePrinter(printer);
   const map = {
     "toner-noir": "noir",
     "toner-cyan": "cyan",
@@ -651,48 +678,58 @@ function applyIntervention(form) {
     "toner-jaune": "jaune",
   };
   if (map[type]) {
-    if (printer.extra?.length) {
-      const target = printer.extra.find((item) => item.key === map[type]);
+    if (next.extra?.length) {
+      const target = next.extra.find((item) => item.key === map[type]);
       if (target) target.value = 100;
-    } else if (printer[map[type]] !== null && printer[map[type]] !== undefined) {
-      printer[map[type]] = 100;
+    } else if (next[map[type]] !== null && next[map[type]] !== undefined) {
+      next[map[type]] = 100;
     }
-    printer.niveauxLe = new Date().toISOString();
+    next.niveauxLe = new Date().toISOString();
   }
   if (type === "kit") {
-    for (const kit of printer.kits || []) {
+    for (const kit of next.kits || []) {
       if (kit.level !== null && kit.level !== undefined && Number(kit.level) <= 30) kit.level = 100;
     }
-    printer.niveauxLe = new Date().toISOString();
+    next.niveauxLe = new Date().toISOString();
   }
-  if (data.get("cloture") === "on") printer.observation = "RAS";
-  log({
-    printerId: printer.id,
-    printerNom: printer.nom,
-    type,
-    typeLabel: label,
-    detail: detail || "Intervention enregistrée.",
-  });
-  persist();
-  toast("Intervention enregistrée.");
-  paint();
+  if (data.get("cloture") === "on") next.observation = "RAS";
+  state.busy = true;
+  try {
+    const saved = await api(`/api/printers/${encodeURIComponent(next.id)}`, {
+      method: "PUT",
+      body: {
+        printer: next,
+        journal: { type, detail: detail || "Intervention enregistrée." },
+      },
+    });
+    replacePrinter(saved.printer);
+    state.journal.unshift(saved.entry);
+    toast("Intervention enregistrée.");
+    paint();
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    state.busy = false;
+  }
 }
 
-function removePrinter(id) {
+async function removePrinter(id) {
+  if (state.busy) return;
   const printer = printerById(id);
   if (!printer) return;
-  state.printers = state.printers.filter((item) => item.id !== id);
-  log({
-    printerId: id,
-    printerNom: printer.nom,
-    type: "suppression",
-    typeLabel: "Retrait du parc",
-    detail: printer.emplacement,
-  });
-  persist();
-  toast("Imprimante retirée du parc.");
-  location.hash = "#/parc";
-  paint();
+  state.busy = true;
+  try {
+    const saved = await api(`/api/printers/${encodeURIComponent(id)}`, { method: "DELETE" });
+    state.printers = state.printers.filter((item) => item.id !== id);
+    state.journal.unshift(saved.entry);
+    toast("Imprimante retirée du parc.");
+    location.hash = "#/parc";
+    paint();
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    state.busy = false;
+  }
 }
 
 function exportCsv() {
@@ -706,13 +743,20 @@ function exportCsv() {
   toast("Export CSV téléchargé.");
 }
 
-function resetData() {
-  const next = fresh();
-  state.printers = next.printers;
-  state.journal = [];
-  persist();
-  toast("Relevé du 4 juin 2025 restauré.");
-  paint();
+async function resetData() {
+  if (state.busy) return;
+  state.busy = true;
+  try {
+    const data = await api("/api/reset", { method: "POST" });
+    state.printers = data.printers;
+    state.journal = data.entries || [];
+    toast("Relevé du 4 juin 2025 restauré.");
+    paint();
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    state.busy = false;
+  }
 }
 
 function onClick(event) {
@@ -720,6 +764,20 @@ function onClick(event) {
   const action = actionNode?.dataset.action;
   if (action === "menu") {
     document.body.classList.toggle("nav-open");
+    return;
+  }
+  if (action === "retry") {
+    state.loading = true;
+    state.error = "";
+    paint();
+    refresh()
+      .catch((err) => {
+        state.error = err.message;
+      })
+      .finally(() => {
+        state.loading = false;
+        paint();
+      });
     return;
   }
   if (action === "export") {
@@ -824,16 +882,21 @@ function onChange(event) {
   }
 }
 
-function boot() {
-  const stored = load();
-  state.printers = stored.printers;
-  state.journal = stored.journal;
+async function boot() {
   document.body.addEventListener("click", onClick);
   document.body.addEventListener("submit", onSubmit);
   document.body.addEventListener("input", onInput);
   document.body.addEventListener("change", onChange);
   window.addEventListener("hashchange", () => paint());
   if (!location.hash) location.hash = "#/tableau";
+  paint();
+  try {
+    await refresh();
+  } catch (err) {
+    state.error = err.message;
+  } finally {
+    state.loading = false;
+  }
   paint();
 }
 

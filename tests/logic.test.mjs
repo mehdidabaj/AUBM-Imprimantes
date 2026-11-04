@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { PRINTERS } from "../js/data.js";
+import { readFileSync } from "node:fs";
+import { PRINTERS, RELEVE_DATE } from "../js/data.js";
 import { filtrer, minLevel, statut, resume } from "../js/logic.js";
 
 const byId = (id) => PRINTERS.find((printer) => printer.id === id);
@@ -32,5 +33,15 @@ assert.equal(statut({ nom: "Nouvelle", observation: "RAS", kits: [] }), "attenti
 const locaux = filtrer(PRINTERS, { lien: "local" });
 assert.ok(locaux.every((printer) => /^localhost$/i.test(printer.adresse)));
 assert.equal(locaux.length, 10);
+
+const seed = JSON.parse(readFileSync(new URL("../server/seed.json", import.meta.url), "utf8"));
+assert.equal(seed.length, PRINTERS.length);
+for (const printer of PRINTERS) {
+  const stored = seed.find((item) => item.id === printer.id);
+  assert.ok(stored, printer.id);
+  assert.equal(stored.niveauxLe, RELEVE_DATE);
+  const { niveauxLe, ...rest } = stored;
+  assert.deepEqual(rest, printer);
+}
 
 console.log("tests ok", counts);

@@ -1,4 +1,5 @@
-/** Parc relevé le 4 juin 2025, repris du tableau de suivi. */
+/** Parc relevé le 4 juin 2025, repris du tableau de suivi.
+ *  Source du premier chargement MySQL (server/seed.json). */
 export const RELEVE_DATE = "2025-06-04";
 
 export const PRINTERS = [
