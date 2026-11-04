@@ -8,6 +8,7 @@ SITE_NAME="aubm-imprimantes"
 ENV_FILE="/etc/aubm-imprimantes.env"
 LISTEN_PORT="80"
 RESET_DATA=0
+NEW_ADMIN=0
 
 usage() {
   cat <<'EOF'
@@ -146,6 +147,8 @@ fi
 
 if [[ ! -f "$ENV_FILE" ]]; then
   PASS="Aubm_$(openssl rand -hex 16)"
+  SECRET="$(openssl rand -hex 32)"
+  ADMIN_PASS="Aubm_$(openssl rand -hex 8)"
   umask 027
   cat > "$ENV_FILE" <<EOF
 AUBM_DB_HOST=127.0.0.1
@@ -154,9 +157,24 @@ AUBM_DB_USER=aubm
 AUBM_DB_PASSWORD=${PASS}
 AUBM_BIND=127.0.0.1
 AUBM_PORT=8765
+AUBM_SECRET=${SECRET}
+AUBM_ADMIN_USER=admin
+AUBM_ADMIN_PASSWORD=${ADMIN_PASS}
 EOF
   chown root:www-data "$ENV_FILE"
   chmod 640 "$ENV_FILE"
+  NEW_ADMIN=1
+else
+  if ! grep -q '^AUBM_SECRET=' "$ENV_FILE"; then
+    echo "AUBM_SECRET=$(openssl rand -hex 32)" >> "$ENV_FILE"
+  fi
+  if ! grep -q '^AUBM_ADMIN_USER=' "$ENV_FILE"; then
+    echo "AUBM_ADMIN_USER=admin" >> "$ENV_FILE"
+  fi
+  if ! grep -q '^AUBM_ADMIN_PASSWORD=' "$ENV_FILE"; then
+    echo "AUBM_ADMIN_PASSWORD=Aubm_$(openssl rand -hex 8)" >> "$ENV_FILE"
+    NEW_ADMIN=1
+  fi
 fi
 
 set -a
@@ -169,6 +187,14 @@ set +a
 : "${AUBM_DB_USER:?AUBM_DB_USER manquant dans ${ENV_FILE}}"
 : "${AUBM_DB_PASSWORD:?AUBM_DB_PASSWORD manquant dans ${ENV_FILE}}"
 : "${AUBM_PORT:=8765}"
+: "${AUBM_SECRET:?AUBM_SECRET manquant dans ${ENV_FILE}}"
+: "${AUBM_ADMIN_USER:=admin}"
+: "${AUBM_ADMIN_PASSWORD:?AUBM_ADMIN_PASSWORD manquant dans ${ENV_FILE}}"
+
+if [[ ${#AUBM_ADMIN_PASSWORD} -lt 8 ]]; then
+  echo "AUBM_ADMIN_PASSWORD doit contenir au moins 8 caractères." >&2
+  exit 1
+fi
 
 if [[ ! "$AUBM_DB_NAME" =~ ^[A-Za-z0-9_]+$ || ! "$AUBM_DB_USER" =~ ^[A-Za-z0-9_]+$ ]]; then
   echo "Le nom de base ou l'utilisateur MySQL est invalide." >&2
@@ -324,8 +350,41 @@ if [[ "$ready" -ne 1 ]]; then
   exit 1
 fi
 
+api_login() {
+  local jar="$1"
+  local body
+  body="$(mktemp)"
+  python3 - "$body" <<'PY'
+import json, os, sys
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump({
+        "identifiant": os.environ.get("AUBM_ADMIN_USER", "admin"),
+        "motDePasse": os.environ["AUBM_ADMIN_PASSWORD"],
+    }, handle)
+PY
+  curl -fsS -c "$jar" -H "Content-Type: application/json" --data-binary @"$body" \
+    "http://127.0.0.1:${AUBM_PORT}/api/login" >/dev/null || {
+    rm -f "$body"
+    return 1
+  }
+  rm -f "$body"
+}
+
+USERS="$(mysql --protocol=socket -uroot -N -e "SELECT COUNT(*) FROM utilisateurs" "$AUBM_DB_NAME")"
+if [[ "${USERS:-0}" -lt 1 ]]; then
+  echo "Aucun compte utilisateur n'a été créé." >&2
+  exit 1
+fi
+
 if [[ "$RESET_DATA" -eq 1 ]]; then
-  curl -fsS -X POST "http://127.0.0.1:${AUBM_PORT}/api/reset" >/dev/null
+  COOKIE="$(mktemp)"
+  if ! api_login "$COOKIE"; then
+    rm -f "$COOKIE"
+    echo "Connexion administrateur refusée. Alignez AUBM_ADMIN_PASSWORD dans ${ENV_FILE} sur le mot de passe actuel du compte, puis relancez avec --reset-data." >&2
+    exit 1
+  fi
+  curl -fsS -b "$COOKIE" -X POST "http://127.0.0.1:${AUBM_PORT}/api/reset" >/dev/null
+  rm -f "$COOKIE"
   echo "Relevé du 4 juin 2025 rechargé. Le journal a été vidé."
 fi
 
@@ -334,7 +393,7 @@ if ! curl -fsS "http://127.0.0.1:${LISTEN_PORT}/api/health" >/dev/null; then
   exit 1
 fi
 
-COUNT="$(curl -fsS "http://127.0.0.1:${AUBM_PORT}/api/printers" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["printers"]))')"
+COUNT="$(mysql --protocol=socket -uroot -N -e "SELECT COUNT(*) FROM imprimantes" "$AUBM_DB_NAME")"
 
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
   if [[ "$LISTEN_PORT" == "80" ]]; then
@@ -369,6 +428,18 @@ Parc imprimantes installé.
 
 Les fiches, les toners, les kits et les observations sont dans la base ${AUBM_DB_NAME}.
 Les autres bases MySQL du serveur, dont celle de GLPI, ne sont pas modifiées.
-Une réinstallation conserve la base. Pour revenir au relevé du 4 juin 2025 :
+Deux profils : administrateur (gestion complète et comptes) et consultation (lecture, filtres, export).
+Une réinstallation conserve la base et les comptes. Pour revenir au relevé du 4 juin 2025 :
   sudo ${ROOT}/deploy/install-debian.sh --listen-port ${LISTEN_PORT} --reset-data
 EOF
+
+if [[ "$NEW_ADMIN" -eq 1 ]]; then
+  cat <<EOF
+
+Compte administrateur créé.
+  Identifiant : ${AUBM_ADMIN_USER}
+  Mot de passe : ${AUBM_ADMIN_PASSWORD}
+Ce mot de passe est aussi dans ${ENV_FILE}. Il n'est affiché qu'à la création.
+Changez-le ensuite dans la page Utilisateurs. Après un changement, mettez ${ENV_FILE} à jour avant un --reset-data.
+EOF
+fi

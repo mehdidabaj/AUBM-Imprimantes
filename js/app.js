@@ -25,6 +25,8 @@ const state = {
   filters: { q: "", dept: "", statut: "", couleur: "", lien: "", lieu: "", marque: "" },
   sort: { key: "statut", dir: "asc" },
   selected: new Set(),
+  user: null,
+  users: null,
   toast: "",
 };
 
@@ -45,8 +47,20 @@ async function api(path, { method = "GET", body } = {}) {
     throw new Error("Impossible de joindre le serveur.");
   }
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "L'enregistrement a été refusé.");
+  if (!response.ok) {
+    const error = new Error(data.error || "L'enregistrement a été refusé.");
+    error.status = response.status;
+    throw error;
+  }
   return data;
+}
+
+function canManage() {
+  return state.user?.role === "admin";
+}
+
+function roleLabel(role) {
+  return role === "admin" ? "Administrateur" : "Consultation";
 }
 
 async function refresh() {
@@ -77,7 +91,7 @@ function route() {
   const hash = location.hash.replace(/^#/, "") || "/tableau";
   const [path, id] = hash.split("/").filter(Boolean);
   if (path === "imprimante") return { name: "imprimante", id: id || "nouveau" };
-  if (path === "parc" || path === "alertes" || path === "journal" || path === "tableau") return { name: path };
+  if (path === "parc" || path === "alertes" || path === "journal" || path === "tableau" || path === "utilisateurs") return { name: path };
   return { name: "tableau" };
 }
 
@@ -97,6 +111,14 @@ function toast(message) {
 }
 
 function paint({ preserveScroll = false, focusId = "" } = {}) {
+  document.body.classList.toggle("is-login", !state.user);
+  if (!state.user) {
+    document.getElementById("sidebar").innerHTML = "";
+    document.getElementById("topbar").innerHTML = "";
+    document.getElementById("view").innerHTML = gateHtml();
+    document.body.classList.remove("nav-open");
+    return;
+  }
   const y = window.scrollY;
   const focus = focusId || (document.activeElement && document.activeElement.id === "q" ? "q" : "");
   const caret = focus ? document.activeElement.selectionStart : null;
@@ -123,6 +145,7 @@ function sidebarHtml() {
     ["alertes", "Alertes"],
     ["journal", "Journal"],
   ];
+  if (canManage()) items.push(["utilisateurs", "Utilisateurs"]);
   return `
     <a class="brand" href="#/tableau">
       <span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
@@ -138,6 +161,7 @@ function sidebarHtml() {
     <div class="side-foot">
       <p>Relevé importé du <strong>${esc(formatDate(RELEVE_DATE))}</strong></p>
       <p>${state.printers.length} machine${state.printers.length > 1 ? "s" : ""} suivie${state.printers.length > 1 ? "s" : ""}</p>
+      <p>${esc(state.user.nom)} · ${esc(roleLabel(state.user.role))}</p>
     </div>`;
 }
 
@@ -145,12 +169,15 @@ function topbarHtml() {
   const current = route();
   const titles = {
     tableau: ["Vue d'ensemble", "Ce qui demande une intervention, et l'état du parc."],
-    parc: ["Inventaire", "Recherchez une machine, mettez à jour un niveau, ajoutez un équipement."],
+    parc: canManage()
+      ? ["Inventaire", "Recherchez une machine, mettez à jour un niveau, ajoutez un équipement."]
+      : ["Inventaire", "Recherchez une machine et consultez ses niveaux."],
     alertes: ["File des alertes", "Toners, kits et observations ouvertes, du plus urgent au plus stable."],
     journal: ["Journal des interventions", "Historique des mises à jour faites dans cette application."],
     imprimante: current.id === "nouveau"
       ? ["Nouvelle imprimante", "Ajoutez une machine au parc."]
       : ["Fiche machine", "Niveaux, kits et suivi."],
+    utilisateurs: ["Utilisateurs", "Comptes autorisés à ouvrir le parc."],
   };
   const [title, sub] = titles[current.name];
   return `
@@ -160,9 +187,10 @@ function topbarHtml() {
       <p>${esc(sub)}</p>
     </div>
     <div class="top-actions">
-      <a class="btn btn-primary" href="#/imprimante/nouveau">Ajouter</a>
+      ${canManage() ? `<a class="btn btn-primary" href="#/imprimante/nouveau">Ajouter</a>` : ""}
       <button class="btn" type="button" data-action="export">CSV</button>
       <button class="btn" type="button" data-action="export-pdf">PDF</button>
+      <button class="btn" type="button" data-action="logout">Quitter</button>
     </div>`;
 }
 
@@ -178,7 +206,30 @@ function viewHtml() {
   if (current.name === "parc") return parcHtml();
   if (current.name === "alertes") return alertesHtml();
   if (current.name === "journal") return journalHtml();
+  if (current.name === "utilisateurs") return utilisateursHtml();
   return ficheHtml(current.id);
+}
+
+function gateHtml() {
+  if (state.loading) {
+    return `<section class="card empty-block"><h2>Chargement du parc…</h2><p>Vérification de la session.</p></section>`;
+  }
+  if (state.error) {
+    return `<section class="card empty-block"><h2>Base indisponible</h2><p>${esc(state.error)}</p><button class="btn" type="button" data-action="retry">Réessayer</button></section>`;
+  }
+  return `<section class="login-wrap"><form id="login-form" class="card login-card">
+    <p class="eyebrow">AUBM</p>
+    <h2>Parc imprimantes</h2>
+    <p class="hint">Entrez votre identifiant pour consulter le parc.</p>
+    <label class="field">Identifiant
+      <input name="identifiant" autocomplete="username" required>
+    </label>
+    <label class="field">Mot de passe
+      <input name="motDePasse" type="password" autocomplete="current-password" required>
+    </label>
+    <p class="form-error" id="form-error" hidden></p>
+    <button class="btn btn-primary" type="submit">Entrer</button>
+  </form></section>`;
 }
 
 function dashboardHtml() {
@@ -191,7 +242,9 @@ function dashboardHtml() {
       <div>
         <p class="eyebrow">Snapshot du relevé</p>
         <h2>Les niveaux datent du ${esc(formatDate(RELEVE_DATE))}.</h2>
-        <p>Le relevé est dans MySQL. Ajoutez une imprimante, ses toners et leurs pourcentages, les kits s'il y en a, puis l'observation : la fiche est enregistrée sur le serveur.</p>
+        <p>${canManage()
+          ? "Le relevé est dans MySQL. Ajoutez une imprimante, ses toners et leurs pourcentages, les kits s'il y en a, puis l'observation : la fiche est enregistrée sur le serveur."
+          : "Le relevé est dans MySQL. Les fiches, les filtres et les exports restent disponibles. Les modifications du parc sont réservées aux administrateurs."}</p>
       </div>
       <a class="btn btn-primary" href="#/alertes">Voir les ${counts.critique} alertes</a>
     </section>
@@ -382,18 +435,97 @@ function alertesHtml() {
   }).join("");
 }
 
+function utilisateursHtml() {
+  if (!canManage()) {
+    return `<section class="card empty-block">
+      <h2>Réservé aux administrateurs</h2>
+      <p>La gestion des comptes n'est pas ouverte en consultation.</p>
+      <a class="btn" href="#/tableau">Retour au tableau</a>
+    </section>`;
+  }
+  if (state.users === null) {
+    return `<section class="card empty-block"><h2>Chargement des comptes…</h2><p>Lecture des utilisateurs autorisés.</p></section>`;
+  }
+  return `
+    <section class="card">
+      <header class="card-head">
+        <h2>${state.users.length} compte${state.users.length > 1 ? "s" : ""}</h2>
+      </header>
+      <p class="hint">L'administrateur gère le parc. Le profil Consultation ouvre les fiches, les filtres et les exports, sans modifier les machines.</p>
+      <div class="user-list">
+        ${state.users.map(userForm).join("")}
+      </div>
+    </section>
+    <form id="user-create" class="card">
+      <h2>Nouveau compte</h2>
+      <div class="form-grid">
+        <label class="field">Nom
+          <input name="nom" required maxlength="160" autocomplete="name">
+        </label>
+        <label class="field">Identifiant
+          <input name="identifiant" required minlength="3" maxlength="80" autocapitalize="none" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="field">Mot de passe
+          <input name="motDePasse" type="password" required minlength="8" autocomplete="new-password">
+        </label>
+        <label class="field">Profil
+          <select name="role">
+            <option value="consultation" selected>Consultation</option>
+            <option value="admin">Administrateur</option>
+          </select>
+        </label>
+      </div>
+      <p class="fine">L'identifiant est enregistré en minuscules. Le mot de passe compte au moins 8 caractères.</p>
+      <p class="form-error" hidden></p>
+      <div class="form-actions">
+        <button class="btn btn-primary" type="submit">Créer le compte</button>
+      </div>
+    </form>`;
+}
+
+function userForm(user) {
+  const self = state.user && state.user.id === user.id;
+  return `<form class="user-card" data-user-id="${user.id}">
+    <div class="form-grid">
+      <label class="field">Nom
+        <input name="nom" required maxlength="160" value="${esc(user.nom)}">
+      </label>
+      <label class="field">Identifiant
+        <input value="${esc(user.identifiant)}" disabled>
+      </label>
+      <label class="field">Profil
+        <select name="role">
+          <option value="admin" ${user.role === "admin" ? "selected" : ""}>Administrateur</option>
+          <option value="consultation" ${user.role === "consultation" ? "selected" : ""}>Consultation</option>
+        </select>
+      </label>
+      <label class="field">Nouveau mot de passe
+        <input name="motDePasse" type="password" minlength="8" autocomplete="new-password" placeholder="Laisser vide pour le conserver">
+      </label>
+      <label class="check span2">
+        <input type="checkbox" name="actif" ${user.actif ? "checked" : ""} ${self ? "disabled" : ""}>
+        Compte actif${self ? " — le vôtre reste actif" : ""}
+      </label>
+    </div>
+    <p class="form-error" hidden></p>
+    <div class="form-actions">
+      <button class="btn" type="submit">Enregistrer</button>
+    </div>
+  </form>`;
+}
+
 function journalHtml() {
   if (!state.journal.length) {
     return `<section class="card empty-block">
       <h2>Pas encore d'intervention</h2>
       <p>Quand vous mettez à jour une fiche ou enregistrez un remplacement, la trace apparaît ici.</p>
-      <button class="btn" type="button" data-action="reset">Restaurer le relevé d'origine</button>
+      ${canManage() ? `<button class="btn" type="button" data-action="reset">Restaurer le relevé d'origine</button>` : ""}
     </section>`;
   }
   return `<section class="card">
     <header class="card-head">
       <h2>${state.journal.length} entrée${state.journal.length > 1 ? "s" : ""}</h2>
-      <button class="btn ghost" type="button" data-action="reset">Restaurer le relevé</button>
+      ${canManage() ? `<button class="btn ghost" type="button" data-action="reset">Restaurer le relevé</button>` : ""}
     </header>
     <ol class="journal">
       ${state.journal.map((entry) => {
@@ -412,6 +544,10 @@ function journalHtml() {
 
 function ficheHtml(id) {
   const creating = id === "nouveau";
+  const manage = canManage();
+  if (creating && !manage) {
+    return `<section class="card empty-block"><h2>Consultation seule</h2><p>L'ajout d'une imprimante est réservé aux administrateurs.</p><a class="btn" href="#/parc">Retour au parc</a></section>`;
+  }
   const printer = creating ? blankPrinter() : printerById(id);
   if (!printer) {
     return `<section class="card empty-block"><h2>Machine introuvable</h2><p>Elle a peut-être été retirée du parc.</p><a class="btn" href="#/parc">Retour au parc</a></section>`;
@@ -429,16 +565,18 @@ function ficheHtml(id) {
       ${creating ? "" : `<span class="pill ${code}">${esc(statutLabel(code))}</span>`}
     </header>
     ${printer.ecart ? `<p class="callout">Sur le relevé du 4 juin 2025, le texte des toners et les colonnes de pourcentages ne disent pas la même chose. Les niveaux ci-dessous sont ceux des colonnes. Le texte d'origine reste visible plus bas.</p>` : ""}
-    <form id="printer-form" class="fiche-grid" data-id="${esc(printer.id || "")}">
+    ${manage ? "" : `<p class="callout">Consultation seule. Les modifications du parc sont réservées aux administrateurs.</p>`}
+    <form id="printer-form" data-id="${esc(printer.id || "")}">
+      <fieldset class="plain fiche-grid" ${manage ? "" : "disabled"}>
       <section class="card">
         <h2>Niveaux</h2>
         <p class="hint">${creating || !printer.niveauxLe ? "Saisissez les pourcentages connus." : `Dernière lecture : ${esc(formatDate(printer.niveauxLe))}.`} Laissez vide ce qui ne concerne pas la machine.</p>
         <div class="gauges">${levelFields(printer)}</div>
         <header class="card-head"><h2>Autres toners</h2>
-          <button class="btn ghost" type="button" data-action="add-toner">Ajouter</button>
+          ${manage ? `<button class="btn ghost" type="button" data-action="add-toner">Ajouter</button>` : ""}
         </header>
         <div id="toners" class="kits">
-          ${customToners(printer).map((item) => tonerRow(item.label, item.value, item.key, item.swatch)).join("")}
+          ${customToners(printer).map((item) => tonerRow(item.label, item.value, item.key, item.swatch, manage)).join("")}
         </div>
         <label class="field">Marque des cartouches
           <input name="fourniture" value="${esc(printer.fourniture || "")}" placeholder="HP, Canon, Ricoh…">
@@ -469,20 +607,21 @@ function ficheHtml(id) {
       </section>
       <section class="card span2">
         <header class="card-head"><h2>Kits et consommables</h2>
-          <button class="btn ghost" type="button" data-action="add-kit">Ajouter</button>
+          ${manage ? `<button class="btn ghost" type="button" data-action="add-kit">Ajouter</button>` : ""}
         </header>
         <div id="kits" class="kits">
-          ${(printer.kits || []).map((kit) => kitRow(kit.label, kit.level)).join("")}
+          ${(printer.kits || []).map((kit) => kitRow(kit.label, kit.level, manage)).join("")}
         </div>
         ${printer.releve ? `<p class="releve"><span>Texte du relevé du ${esc(formatDate(RELEVE_DATE))}</span> ${esc(printer.releve)}</p>` : ""}
         <p class="form-error" id="form-error" hidden></p>
         <div class="form-actions">
-          <button class="btn btn-primary" type="submit">Enregistrer</button>
-          ${creating ? `<a class="btn" href="#/parc">Annuler</a>` : `<button class="btn danger" type="button" data-action="delete" data-id="${esc(printer.id)}">Supprimer</button>`}
+          ${manage ? `<button class="btn btn-primary" type="submit">Enregistrer</button>` : ""}
+          ${creating ? `<a class="btn" href="#/parc">Annuler</a>` : (manage ? `<button class="btn danger" type="button" data-action="delete" data-id="${esc(printer.id)}">Supprimer</button>` : "")}
         </div>
       </section>
+      </fieldset>
     </form>
-    ${creating ? "" : interventionHtml(printer, history)}`;
+    ${creating || !manage ? "" : interventionHtml(printer, history)}`;
 }
 
 function blankPrinter() {
@@ -545,22 +684,22 @@ function slider(key, label, value, swatch, extra) {
   </div>`;
 }
 
-function tonerRow(label, level, key = "", swatch = "") {
+function tonerRow(label, level, key = "", swatch = "", editable = true) {
   const hasLevel = level !== null && level !== undefined && level !== "";
   const tone = swatch || TONER_SWATCHES[0];
   return `<div class="kit-row toner-row" data-key="${esc(key)}" data-swatch="${esc(tone)}">
     <input name="tonerLabel" value="${esc(label)}" placeholder="Gris, noir photo, réservoir…" aria-label="Nom du toner">
     <input name="tonerLevel" type="number" min="0" max="100" value="${hasLevel ? Number(level) : ""}" placeholder="%" aria-label="Pourcentage du toner">
-    <button class="btn ghost" type="button" data-action="remove-toner">Retirer</button>
+    ${editable ? `<button class="btn ghost" type="button" data-action="remove-toner">Retirer</button>` : ""}
   </div>`;
 }
 
-function kitRow(label, level) {
+function kitRow(label, level, editable = true) {
   const hasLevel = level !== null && level !== undefined && level !== "";
   return `<div class="kit-row">
     <input name="kitLabel" value="${esc(label)}" placeholder="Kit de fusion, tambour…" aria-label="Nom du kit">
     <input name="kitLevel" type="number" min="0" max="100" value="${hasLevel ? Number(level) : ""}" placeholder="OK" aria-label="Niveau du kit en pourcentage">
-    <button class="btn ghost" type="button" data-action="remove-kit">Retirer</button>
+    ${editable ? `<button class="btn ghost" type="button" data-action="remove-kit">Retirer</button>` : ""}
   </div>`;
 }
 
@@ -684,8 +823,181 @@ function clamp(value, fallback = 0) {
   return Math.max(0, Math.min(100, Math.round(number)));
 }
 
-async function savePrinter(form) {
+function showFormError(form, message) {
+  const node = form.querySelector(".form-error");
+  if (!node) return;
+  node.hidden = !message;
+  node.textContent = message || "";
+}
+
+function sessionLost(err) {
+  if (err.status !== 401) return false;
+  state.user = null;
+  state.users = null;
+  state.printers = [];
+  state.journal = [];
+  state.selected = new Set();
+  state.error = "";
+  state.loading = false;
+  paint();
+  return true;
+}
+
+let usersRequest = null;
+
+async function ensureUsers() {
+  if (!canManage() || route().name !== "utilisateurs" || state.users !== null) return;
+  if (!usersRequest) {
+    usersRequest = api("/api/users").finally(() => {
+      usersRequest = null;
+    });
+  }
+  const data = await usersRequest;
+  state.users = Array.isArray(data.users) ? data.users : [];
+}
+
+async function openSession() {
+  state.loading = true;
+  state.error = "";
+  paint();
+  try {
+    state.user = await api("/api/me");
+    await refresh();
+    await ensureUsers();
+    state.error = "";
+  } catch (err) {
+    if (err.status === 401) {
+      state.user = null;
+      state.users = null;
+      state.error = "";
+    } else {
+      state.error = err.message;
+    }
+  } finally {
+    state.loading = false;
+    paint();
+  }
+}
+
+async function login(form) {
   if (state.busy) return;
+  state.busy = true;
+  const identifiant = form.identifiant.value.trim();
+  const motDePasse = form.motDePasse.value;
+  try {
+    state.user = await api("/api/login", {
+      method: "POST",
+      body: { identifiant, motDePasse },
+    });
+    state.error = "";
+    state.loading = true;
+    paint();
+    await refresh();
+    await ensureUsers();
+    state.loading = false;
+    paint();
+  } catch (err) {
+    state.loading = false;
+    if (state.user && sessionLost(err)) return;
+    if (!state.user) {
+      paint();
+      const next = document.getElementById("login-form");
+      if (next) {
+        next.identifiant.value = identifiant;
+        showFormError(next, err.message);
+      }
+      return;
+    }
+    state.error = err.message;
+    paint();
+  } finally {
+    state.busy = false;
+  }
+}
+
+async function logout() {
+  try {
+    await api("/api/logout", { method: "POST" });
+  } catch {
+    /* La session locale est fermée même si le serveur ne répond plus. */
+  }
+  state.user = null;
+  state.users = null;
+  state.printers = [];
+  state.journal = [];
+  state.selected = new Set();
+  state.error = "";
+  state.loading = false;
+  paint();
+}
+
+async function createUser(form) {
+  if (state.busy) return;
+  const data = new FormData(form);
+  state.busy = true;
+  showFormError(form, "");
+  try {
+    const saved = await api("/api/users", {
+      method: "POST",
+      body: {
+        nom: String(data.get("nom") || "").trim(),
+        identifiant: String(data.get("identifiant") || "").trim(),
+        motDePasse: String(data.get("motDePasse") || ""),
+        role: String(data.get("role") || "consultation"),
+      },
+    });
+    state.users = [...(state.users || []), saved.user].sort((a, b) => (
+      a.nom.localeCompare(b.nom, "fr") || a.identifiant.localeCompare(b.identifiant, "fr")
+    ));
+    toast(`Compte ${saved.user.identifiant} créé.`);
+    paint();
+  } catch (err) {
+    if (sessionLost(err)) return;
+    showFormError(form, err.message);
+  } finally {
+    state.busy = false;
+  }
+}
+
+async function saveUser(form) {
+  if (state.busy) return;
+  const id = Number(form.dataset.userId);
+  const data = new FormData(form);
+  const actifBox = form.querySelector('[name="actif"]');
+  const motDePasse = String(data.get("motDePasse") || "");
+  state.busy = true;
+  showFormError(form, "");
+  try {
+    const saved = await api(`/api/users/${id}`, {
+      method: "PUT",
+      body: {
+        nom: String(data.get("nom") || "").trim(),
+        role: String(data.get("role") || ""),
+        actif: actifBox ? (actifBox.disabled ? true : actifBox.checked) : true,
+        ...(motDePasse ? { motDePasse } : {}),
+      },
+    });
+    state.users = (state.users || []).map((user) => (user.id === saved.user.id ? saved.user : user));
+    if (state.user && state.user.id === saved.user.id) {
+      state.user = {
+        ...state.user,
+        nom: saved.user.nom,
+        role: saved.user.role,
+        actif: saved.user.actif,
+      };
+    }
+    toast("Compte mis à jour.");
+    paint();
+  } catch (err) {
+    if (sessionLost(err)) return;
+    showFormError(form, err.message);
+  } finally {
+    state.busy = false;
+  }
+}
+
+async function savePrinter(form) {
+  if (state.busy || !canManage()) return;
   const id = form.dataset.id;
   const previous = id ? printerById(id) : null;
   const result = readPrinter(form, previous);
@@ -717,6 +1029,7 @@ async function savePrinter(form) {
     location.hash = `#/imprimante/${saved.printer.id}`;
     paint();
   } catch (err) {
+    if (sessionLost(err)) return;
     error.hidden = false;
     error.textContent = err.message;
   } finally {
@@ -776,7 +1089,7 @@ async function applyIntervention(form) {
     toast("Intervention enregistrée.");
     paint();
   } catch (err) {
-    toast(err.message);
+    if (!sessionLost(err)) toast(err.message);
   } finally {
     state.busy = false;
   }
@@ -795,7 +1108,7 @@ async function removePrinter(id) {
     location.hash = "#/parc";
     paint();
   } catch (err) {
-    toast(err.message);
+    if (!sessionLost(err)) toast(err.message);
   } finally {
     state.busy = false;
   }
@@ -869,7 +1182,7 @@ async function resetData() {
     toast("Relevé du 4 juin 2025 restauré.");
     paint();
   } catch (err) {
-    toast(err.message);
+    if (!sessionLost(err)) toast(err.message);
   } finally {
     state.busy = false;
   }
@@ -878,22 +1191,16 @@ async function resetData() {
 function onClick(event) {
   const actionNode = event.target.closest("[data-action]");
   const action = actionNode?.dataset.action;
+  if (action === "logout") {
+    logout();
+    return;
+  }
   if (action === "menu") {
     document.body.classList.toggle("nav-open");
     return;
   }
   if (action === "retry") {
-    state.loading = true;
-    state.error = "";
-    paint();
-    refresh()
-      .catch((err) => {
-        state.error = err.message;
-      })
-      .finally(() => {
-        state.loading = false;
-        paint();
-      });
+    openSession();
     return;
   }
   if (action === "export") {
@@ -923,6 +1230,7 @@ function onClick(event) {
     return;
   }
   if (action === "add-toner") {
+    if (!canManage()) return;
     const swatch = TONER_SWATCHES[document.querySelectorAll(".toner-row").length % TONER_SWATCHES.length];
     document.getElementById("toners").insertAdjacentHTML("beforeend", tonerRow("", "", uid("ton"), swatch));
     return;
@@ -932,6 +1240,7 @@ function onClick(event) {
     return;
   }
   if (action === "reset") {
+    if (!canManage()) return;
     if (actionNode.dataset.confirm !== "1") {
       actionNode.dataset.confirm = "1";
       actionNode.textContent = "Confirmer la restauration";
@@ -966,6 +1275,7 @@ function onClick(event) {
     return;
   }
   if (action === "add-kit") {
+    if (!canManage()) return;
     document.getElementById("kits").insertAdjacentHTML("beforeend", kitRow("", null));
     return;
   }
@@ -974,6 +1284,7 @@ function onClick(event) {
     return;
   }
   if (action === "delete") {
+    if (!canManage()) return;
     if (actionNode.dataset.confirm !== "1") {
       actionNode.dataset.confirm = "1";
       actionNode.textContent = "Confirmer la suppression";
@@ -989,14 +1300,46 @@ function onClick(event) {
 }
 
 function onSubmit(event) {
-  if (event.target.id === "printer-form") {
+  const form = event.target;
+  if (form.id === "login-form") {
     event.preventDefault();
-    savePrinter(event.target);
+    login(form);
+    return;
   }
-  if (event.target.id === "intervention-form") {
+  if (form.id === "user-create") {
     event.preventDefault();
-    applyIntervention(event.target);
+    createUser(form);
+    return;
   }
+  if (form.dataset.userId) {
+    event.preventDefault();
+    saveUser(form);
+    return;
+  }
+  if (form.id === "printer-form") {
+    event.preventDefault();
+    savePrinter(form);
+  }
+  if (form.id === "intervention-form") {
+    event.preventDefault();
+    applyIntervention(form);
+  }
+}
+
+async function onNavigate() {
+  if (!state.user) {
+    paint();
+    return;
+  }
+  try {
+    if (canManage() && route().name === "utilisateurs" && state.users === null) {
+      paint();
+      await ensureUsers();
+    }
+  } catch (err) {
+    if (!sessionLost(err)) state.error = err.message;
+  }
+  if (state.user) paint();
 }
 
 function onInput(event) {
@@ -1034,17 +1377,11 @@ async function boot() {
   document.body.addEventListener("submit", onSubmit);
   document.body.addEventListener("input", onInput);
   document.body.addEventListener("change", onChange);
-  window.addEventListener("hashchange", () => paint());
+  window.addEventListener("hashchange", () => {
+    onNavigate();
+  });
   if (!location.hash) location.hash = "#/tableau";
-  paint();
-  try {
-    await refresh();
-  } catch (err) {
-    state.error = err.message;
-  } finally {
-    state.loading = false;
-  }
-  paint();
+  await openSession();
 }
 
 boot();

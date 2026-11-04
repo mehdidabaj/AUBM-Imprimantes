@@ -7,13 +7,14 @@ import os
 import re
 import secrets
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pymysql
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, session
 from pymysql.err import IntegrityError, MySQLError
 from werkzeug.exceptions import HTTPException
+from werkzeug.security import check_password_hash, generate_password_hash
 
 ROOT = Path(__file__).resolve().parent
 SEED_PATH = ROOT / "seed.json"
@@ -39,15 +40,32 @@ JOURNAL_TYPES = {
 }
 
 ID_RE = re.compile(r"[A-Za-z0-9_-]{1,40}")
+USER_RE = re.compile(r"[a-z0-9][a-z0-9._-]{2,79}")
+ROLES = {"admin", "consultation"}
 INSTANT_RE = re.compile(r"\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?Z)?")
 SWATCH_RE = re.compile(r"#[0-9A-Fa-f]{3,8}")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 app = Flask(__name__)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=False,
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
+)
 try:
     app.json.ensure_ascii = False
 except AttributeError:
     app.config["JSON_AS_ASCII"] = False
+
+
+def configure_session():
+    secret = os.environ.get("AUBM_SECRET", "")
+    if secret:
+        app.secret_key = secret
+
+
+configure_session()
 
 
 class ApiError(Exception):
@@ -452,6 +470,107 @@ def seed_if_empty(conn):
         insert_seed(cur)
 
 
+def public_user(row):
+    return {
+        "id": row["id"],
+        "identifiant": row["identifiant"],
+        "nom": row["nom"],
+        "role": row["role"],
+        "actif": bool(row["actif"]),
+    }
+
+
+def session_user(conn):
+    user_id = session.get("user_id")
+    if not user_id:
+        return None
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, identifiant, nom, role, actif FROM utilisateurs WHERE id = %s",
+            (user_id,),
+        )
+        row = cur.fetchone()
+    if not row or not row["actif"]:
+        session.clear()
+        return None
+    return row
+
+
+def require_user():
+    def read(conn):
+        return session_user(conn)
+
+    user = run(read)
+    if not user:
+        raise ApiError("Connexion requise.", 401)
+    return user
+
+
+def require_admin():
+    user = require_user()
+    if user["role"] != "admin":
+        raise ApiError("Cette action est réservée aux administrateurs.", 403)
+    return user
+
+
+def guarded(admin=False):
+    def decorator(fn):
+        def wrapped(*args, **kwargs):
+            if admin:
+                require_admin()
+            else:
+                require_user()
+            return fn(*args, **kwargs)
+
+        wrapped.__name__ = fn.__name__
+        return wrapped
+
+    return decorator
+
+
+def clean_role(value):
+    role = clean_text(value, 20, True, "Le profil")
+    if role not in ROLES:
+        raise ApiError("Profil invalide.", 400)
+    return role
+
+
+def clean_login(value):
+    identifiant = clean_text(value, 80, True, "L'identifiant").lower()
+    if not USER_RE.fullmatch(identifiant):
+        raise ApiError("L'identifiant doit contenir au moins 3 lettres ou chiffres.", 400)
+    return identifiant
+
+
+def clean_password(value, required=False):
+    password = "" if value is None else str(value)
+    if not password:
+        if required:
+            raise ApiError("Le mot de passe est obligatoire.", 400)
+        return ""
+    if len(password) < 8 or len(password) > 200:
+        raise ApiError("Le mot de passe doit contenir au moins 8 caractères.", 400)
+    return password
+
+
+def ensure_admin(conn):
+    username = clean_login(os.environ.get("AUBM_ADMIN_USER", "admin"))
+    password = os.environ.get("AUBM_ADMIN_PASSWORD", "")
+    if len(password) < 8:
+        raise ApiError("AUBM_ADMIN_PASSWORD est absent.", 500)
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS n FROM utilisateurs")
+        if cur.fetchone()["n"]:
+            return
+        cur.execute(
+            """
+            INSERT INTO utilisateurs (identifiant, nom, mot_de_passe, role, actif)
+            VALUES (%s, %s, %s, 'admin', 1)
+            """,
+            (username, "Administrateur", generate_password_hash(password)),
+        )
+
+
 def payload():
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -476,7 +595,148 @@ def health():
     return jsonify(run(check))
 
 
+@app.post("/api/login")
+def login():
+    body = payload()
+    identifiant = clean_login(body.get("identifiant"))
+    password = "" if body.get("motDePasse") is None else str(body.get("motDePasse"))
+
+    def read(conn):
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, identifiant, nom, role, actif, mot_de_passe
+                  FROM utilisateurs
+                 WHERE identifiant = %s
+                """,
+                (identifiant,),
+            )
+            return cur.fetchone()
+
+    row = run(read)
+    if not row or not row["actif"] or not check_password_hash(row["mot_de_passe"], password):
+        raise ApiError("Identifiant ou mot de passe incorrect.", 401)
+    session.clear()
+    session["user_id"] = row["id"]
+    session.permanent = True
+    return jsonify(public_user(row))
+
+
+@app.post("/api/logout")
+def logout():
+    session.clear()
+    return jsonify(ok=True)
+
+
+@app.get("/api/me")
+def me():
+    return jsonify(public_user(require_user()))
+
+
+@app.get("/api/users")
+@guarded(admin=True)
+def list_users():
+    def read(conn):
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, identifiant, nom, role, actif
+                  FROM utilisateurs
+                 ORDER BY nom, identifiant
+                """
+            )
+            return {"users": [public_user(row) for row in cur.fetchall()]}
+
+    return jsonify(run(read))
+
+
+@app.post("/api/users")
+@guarded(admin=True)
+def create_user():
+    body = payload()
+    identifiant = clean_login(body.get("identifiant"))
+    nom = clean_text(body.get("nom"), 160, True, "Le nom")
+    role = clean_role(body.get("role"))
+    password = clean_password(body.get("motDePasse"), required=True)
+
+    def write(conn):
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM utilisateurs WHERE identifiant = %s", (identifiant,))
+            if cur.fetchone():
+                raise ApiError("Cet identifiant est déjà utilisé.", 409)
+            cur.execute(
+                """
+                INSERT INTO utilisateurs (identifiant, nom, mot_de_passe, role, actif)
+                VALUES (%s, %s, %s, %s, 1)
+                """,
+                (identifiant, nom, generate_password_hash(password), role),
+            )
+            cur.execute(
+                "SELECT id, identifiant, nom, role, actif FROM utilisateurs WHERE id = %s",
+                (cur.lastrowid,),
+            )
+            return {"user": public_user(cur.fetchone())}
+
+    return jsonify(run(write)), 201
+
+
+@app.put("/api/users/<int:user_id>")
+@guarded(admin=True)
+def update_user(user_id):
+    body = payload()
+    nom = clean_text(body.get("nom"), 160, True, "Le nom")
+    role = clean_role(body.get("role"))
+    actif = body.get("actif") in (True, 1, "1", "on")
+    password = clean_password(body.get("motDePasse"), required=False)
+    if session.get("user_id") == user_id and not actif:
+        raise ApiError("Vous ne pouvez pas désactiver votre propre compte.", 400)
+
+    def write(conn):
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, role, actif FROM utilisateurs WHERE id = %s FOR UPDATE",
+                (user_id,),
+            )
+            current = cur.fetchone()
+            if not current:
+                raise ApiError("Compte introuvable.", 404)
+            loses_admin = current["role"] == "admin" and current["actif"] and not (role == "admin" and actif)
+            if loses_admin:
+                cur.execute(
+                    """
+                    SELECT COUNT(*) AS n
+                      FROM utilisateurs
+                     WHERE role = 'admin' AND actif = 1 AND id <> %s
+                    """,
+                    (user_id,),
+                )
+                if cur.fetchone()["n"] == 0:
+                    raise ApiError("Le dernier administrateur actif doit rester en place.", 400)
+            if password:
+                cur.execute(
+                    """
+                    UPDATE utilisateurs
+                       SET nom = %s, role = %s, actif = %s, mot_de_passe = %s
+                     WHERE id = %s
+                    """,
+                    (nom, role, int(actif), generate_password_hash(password), user_id),
+                )
+            else:
+                cur.execute(
+                    "UPDATE utilisateurs SET nom = %s, role = %s, actif = %s WHERE id = %s",
+                    (nom, role, int(actif), user_id),
+                )
+            cur.execute(
+                "SELECT id, identifiant, nom, role, actif FROM utilisateurs WHERE id = %s",
+                (user_id,),
+            )
+            return {"user": public_user(cur.fetchone())}
+
+    return jsonify(run(write))
+
+
 @app.get("/api/printers")
+@guarded()
 def list_printers():
     def read(conn):
         with conn.cursor() as cur:
@@ -486,6 +746,7 @@ def list_printers():
 
 
 @app.get("/api/journal")
+@guarded()
 def list_journal():
     def read(conn):
         with conn.cursor() as cur:
@@ -495,6 +756,7 @@ def list_journal():
 
 
 @app.post("/api/printers")
+@guarded(admin=True)
 def create_printer():
     body = payload()
     printer = normalize(body.get("printer") or {})
@@ -513,6 +775,7 @@ def create_printer():
 
 
 @app.put("/api/printers/<printer_id>")
+@guarded(admin=True)
 def update_printer_route(printer_id):
     body = payload()
     printer = normalize(body.get("printer") or {}, forced_id=printer_id)
@@ -528,6 +791,7 @@ def update_printer_route(printer_id):
 
 
 @app.delete("/api/printers/<printer_id>")
+@guarded(admin=True)
 def delete_printer(printer_id):
     printer_id = clean_text(printer_id, 40, True, "Identifiant")
     if not ID_RE.fullmatch(printer_id):
@@ -557,6 +821,7 @@ def delete_printer(printer_id):
 
 
 @app.post("/api/reset")
+@guarded(admin=True)
 def reset():
     def write(conn):
         with conn.cursor() as cur:
@@ -584,8 +849,17 @@ def handle_unexpected(err):
 def main():
     if not os.environ.get("AUBM_DB_PASSWORD"):
         raise SystemExit("AUBM_DB_PASSWORD est absent.")
-    with connection() as conn:
-        seed_if_empty(conn)
+    if not os.environ.get("AUBM_SECRET"):
+        raise SystemExit("AUBM_SECRET est absent.")
+    if not os.environ.get("AUBM_ADMIN_PASSWORD"):
+        raise SystemExit("AUBM_ADMIN_PASSWORD est absent.")
+    configure_session()
+    try:
+        with connection() as conn:
+            seed_if_empty(conn)
+            ensure_admin(conn)
+    except ApiError as exc:
+        raise SystemExit(str(exc)) from exc
     host = os.environ.get("AUBM_BIND", "127.0.0.1")
     port = int(os.environ.get("AUBM_PORT", "8765"))
     app.run(host=host, port=port, threaded=True, use_reloader=False)

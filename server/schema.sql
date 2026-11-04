@@ -44,6 +44,18 @@ CREATE TABLE IF NOT EXISTS kits (
         REFERENCES imprimantes (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS utilisateurs (
+    id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    identifiant VARCHAR(80) NOT NULL,
+    nom VARCHAR(160) NOT NULL,
+    mot_de_passe VARCHAR(255) NOT NULL,
+    role VARCHAR(20) NOT NULL,
+    actif TINYINT(1) NOT NULL DEFAULT 1,
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    PRIMARY KEY (id),
+    UNIQUE KEY uniq_identifiant (identifiant)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS journal (
     id INT UNSIGNED NOT NULL AUTO_INCREMENT,
     imprimante_id VARCHAR(40) NULL,

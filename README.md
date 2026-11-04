@@ -50,7 +50,18 @@ sudo ./deploy/install-debian.sh --server-name 195.200.200.16 --listen-port 8080
 
 Contrôle : `curl -s http://127.0.0.1:8080/api/health` doit répondre `"ok": true`. Pour recharger le relevé du 4 juin 2025 : `sudo ./deploy/install-debian.sh --server-name 195.200.200.16 --listen-port 8080 --reset-data`. Gardez `--listen-port 8080` à chaque relance, afin de laisser le port 80 à GLPI.
 
-Le mot de passe du compte `aubm` est créé dans `/etc/aubm-imprimantes.env` (lecture root et www-data). Une réinstallation le réutilise et conserve les fiches déjà saisies.
+Le mot de passe du compte MySQL `aubm` est créé dans `/etc/aubm-imprimantes.env` (lecture root et www-data). Une réinstallation le réutilise et conserve les fiches déjà saisies.
+
+## Comptes et accès
+
+Deux profils :
+
+- **Administrateur** : parc, interventions, restauration du relevé, et page Utilisateurs.
+- **Consultation** : tableau, inventaire, alertes, fiches et journal en lecture, plus les exports CSV et PDF. L'ajout, la modification et la suppression du parc restent fermés.
+
+À la première installation, le script crée le compte `admin` (ou la valeur de `AUBM_ADMIN_USER`) et affiche son mot de passe une seule fois. Il est aussi écrit dans `/etc/aubm-imprimantes.env` (`AUBM_ADMIN_PASSWORD`). Une réinstallation ne le réaffiche pas, car le mot de passe peut avoir été changé dans l'application. La page Utilisateurs permet d'ajouter un compte, de changer son profil, de le désactiver ou de poser un nouveau mot de passe. Le dernier administrateur actif reste en place.
+
+L'adresse `/api/health` reste publique pour le contrôle d'installation. Le reste de l'API exige une session. Les modifications exigent le profil administrateur.
 
 Pour mettre à jour après un changement, relancez le script avec les mêmes options. Sur un serveur sans GLPI :
 
@@ -96,13 +107,19 @@ Sur un serveur sans systemd, le script démarre MySQL et l'API directement. Le j
 
 ## Ce que l'on peut faire
 
+Tout compte connecté peut :
+
+- Voir les machines à traiter (observation autre que RAS, ou consommable à 10 % ou moins) et celles à surveiller (jusqu'à 30 %, ou toner non renseigné).
+- Filtrer le parc par département, état, couleur, réseau ou antenne.
+- Exporter le parc en CSV ou en PDF. Dans l'inventaire, les machines cochées forment l'export. Sans coche, l'export reprend la liste filtrée.
+
+L'administrateur peut en plus :
+
 - Ajouter une imprimante : nom, département, emplacement, adresse, couleur, marque des cartouches.
 - Indiquer chaque toner et son pourcentage. Laisser vide un canal qui ne concerne pas la machine. Ajouter d'autres toners, avec un nom et un pourcentage. Le traceur HP T930 reste suivi sur ses six encres.
 - Ajouter les kits lorsqu'ils existent, avec un pourcentage ou la mention OK si le niveau n'est pas chiffré.
 - Noter l'observation finale (RAS ou le remplacement à prévoir).
 - Enregistrer une intervention (remplacement de toner, de kit, de photoconducteur).
-- Voir les machines à traiter (observation autre que RAS, ou consommable à 10 % ou moins) et celles à surveiller (jusqu'à 30 %, ou toner non renseigné).
-- Filtrer le parc par département, état, couleur, réseau ou antenne.
-- Exporter le parc en CSV ou en PDF. Dans l'inventaire, les machines cochées forment l'export. Sans coche, l'export reprend la liste filtrée.
+- Créer les comptes et choisir leur profil.
 
 Pour le bureau Régisseur, le texte du relevé et les colonnes de pourcentages du tableau ne coïncident pas : la fiche le signale et retient les pourcentages des colonnes.
