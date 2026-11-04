@@ -678,10 +678,10 @@ function ficheHtml(id) {
       </section>
       <section class="card span2">
         <h2>Cartouches</h2>
-        <p class="hint">${creating || !printer.niveauxLe ? "Indiquez la marque, le type et le pourcentage." : `Dernière lecture : ${esc(formatDate(printer.niveauxLe))}.`} La lecture SNMP remplit le type et le niveau.</p>
+        <p class="hint">${creating || !printer.niveauxLe ? "Indiquez la marque, le nom exact de la cartouche et le pourcentage." : `Dernière lecture : ${esc(formatDate(printer.niveauxLe))}.`} La lecture SNMP reprend le nom exact et le niveau renvoyés par l'imprimante.</p>
         ${manage ? `<div class="supply-grid composer" data-composer="toner">
           <input name="draftMarque" placeholder="Marque" autocomplete="off" aria-label="Marque de la cartouche">
-          <input name="draftType" placeholder="Type" autocomplete="off" aria-label="Type de cartouche">
+          <input name="draftType" placeholder="Nom de la cartouche" autocomplete="off" aria-label="Nom de la cartouche">
           <input name="draftNiveau" type="number" min="0" max="100" placeholder="%" aria-label="Pourcentage de la cartouche">
           <button class="btn" type="button" data-action="add-toner">Ajouter</button>
         </div>` : ""}
@@ -768,7 +768,7 @@ function cartoucheRow(item, editable = true) {
   const hasLevel = item.value !== null && item.value !== undefined && item.value !== "";
   return `<div class="supply-grid cartouche-row" data-key="${esc(item.key || "")}" data-swatch="${esc(item.swatch || "")}">
     <input name="cartoucheMarque" value="${esc(item.marque || "")}" placeholder="Marque" aria-label="Marque de la cartouche">
-    <input name="cartoucheType" value="${esc(item.type || "")}" placeholder="Type" aria-label="Type de cartouche">
+    <input name="cartoucheType" value="${esc(item.nom || item.type || "")}" placeholder="Nom de la cartouche" aria-label="Nom de la cartouche">
     <input name="cartoucheNiveau" type="number" min="0" max="100" value="${hasLevel ? Number(item.value) : ""}" placeholder="%" aria-label="Pourcentage de la cartouche">
     ${editable ? `<button class="btn ghost" type="button" data-action="remove-toner">Retirer</button>` : ""}
   </div>`;
@@ -906,7 +906,7 @@ function readCartouches(form) {
     const type = row.querySelector('[name="cartoucheType"]').value.trim();
     const raw = row.querySelector('[name="cartoucheNiveau"]').value.trim();
     if (!marque && !type && raw === "") continue;
-    if (!type) return { error: "Indiquez le type de chaque cartouche." };
+    if (!type) return { error: "Indiquez le nom de chaque cartouche." };
     if (raw === "") return { error: `Indiquez le pourcentage de ${type}.` };
     rows.push({
       key: row.dataset.key || uid("ton"),
@@ -1335,7 +1335,7 @@ function addDraftToner() {
   const type = form.draftType.value.trim();
   const raw = form.draftNiveau.value.trim();
   if (!type) {
-    showFormError(form, "Indiquez le type de la cartouche à ajouter.");
+    showFormError(form, "Indiquez le nom de la cartouche à ajouter.");
     form.draftType.focus();
     return;
   }

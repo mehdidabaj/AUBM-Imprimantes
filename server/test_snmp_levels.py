@@ -56,6 +56,30 @@ class SnmpLevelsTest(unittest.TestCase):
         self.assertEqual(printer["extra"][1]["label"], "Noir photo")
         self.assertEqual(printer["kits"][0]["level"], 25)
 
+    def test_hex_names_stay_exact(self):
+        wrapped = """
+.1.3.6.1.2.1.43.11.1.1.5.1.1 3
+.1.3.6.1.2.1.43.11.1.1.6.1.1 Hex-STRING: 00 43 00 61 00 72
+00 74 00 6F 00 75 00 63 00 68 00 65 00 20 00 6E 00 6F 00 69 00 72
+.1.3.6.1.2.1.43.11.1.1.8.1.1 100
+.1.3.6.1.2.1.43.11.1.1.9.1.1 40
+.1.3.6.1.2.1.43.11.1.1.5.1.2 3
+.1.3.6.1.2.1.43.11.1.1.6.1.2 Hex-STRING: 43 61 72 74 6F 75 63 68 65 20 63 79 61 6E 00
+.1.3.6.1.2.1.43.11.1.1.8.1.2 100
+.1.3.6.1.2.1.43.11.1.1.9.1.2 25
+.1.3.6.1.2.1.43.11.1.1.5.1.3 4
+.1.3.6.1.2.1.43.11.1.1.6.1.3 "Kit de fusion"
+.1.3.6.1.2.1.43.11.1.1.8.1.3 100
+.1.3.6.1.2.1.43.11.1.1.9.1.3 10
+"""
+        reading = named_supplies(parse_walk(wrapped))
+        self.assertEqual(
+            [item["nom"] for item in reading["cartouches"]],
+            ["Cartouche noir", "Cartouche cyan"],
+        )
+        self.assertEqual([item["value"] for item in reading["cartouches"]], [40, 25])
+        self.assertEqual(reading["kits"], [{"label": "Kit de fusion", "level": 10}])
+
     def test_named_supplies_keep_the_printer_labels(self):
         reading = named_supplies(parse_walk(SAMPLE))
         types = [item["type"] for item in reading["cartouches"]]

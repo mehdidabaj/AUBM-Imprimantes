@@ -210,12 +210,12 @@ def toners_from_channels(raw):
         if not ID_RE.fullmatch(key) or key in seen:
             raise ApiError("Canal de toner invalide.", 400)
         seen.add(key)
-        label = clean_text(item.get("label"), 80, True, "Le toner")
+        label = clean_text(item.get("label"), 160, True, "Le toner")
         toners.append({
             "cle": key,
             "libelle": label,
             "marque": clean_text(item.get("marque"), 80),
-            "genre": clean_text(item.get("type"), 80) or label,
+            "genre": clean_text(item.get("type"), 160) or label,
             "pourcentage": percent(item.get("value"), required=True),
             "swatch": swatch_for(label, clean_text(item.get("swatch"), 20)),
             "extra": 1,
@@ -234,7 +234,7 @@ def toners_from_cartouches(items):
     for index, item in enumerate(items):
         if not isinstance(item, dict):
             raise ApiError("Cartouche invalide.", 400)
-        genre = clean_text(item.get("type") or item.get("label"), 80, True, "Le type de cartouche")
+        genre = clean_text(item.get("nom") or item.get("type") or item.get("label"), 160, True, "Le nom de la cartouche")
         marque = clean_text(item.get("marque"), 80)
         value = percent(item.get("value"), required=True)
         requested = clean_text(item.get("key"), 40)
@@ -250,7 +250,7 @@ def toners_from_cartouches(items):
             seen.add(standard_key)
             toners.append({
                 "cle": standard_key,
-                "libelle": labels[standard_key],
+                "libelle": genre,
                 "marque": marque,
                 "genre": genre,
                 "pourcentage": value,

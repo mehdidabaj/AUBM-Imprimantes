@@ -312,6 +312,9 @@ SET @sql := IF(
 PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
+
+ALTER TABLE toners MODIFY libelle VARCHAR(160) NOT NULL;
+ALTER TABLE toners MODIFY genre VARCHAR(160) NOT NULL DEFAULT '';
 SQL
 
 if [[ "$VIDER" -eq 1 ]]; then

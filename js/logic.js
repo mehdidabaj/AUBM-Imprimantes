@@ -20,13 +20,23 @@ const STANDARD = [
 ];
 
 export function tonerLevels(printer) {
+  if (Array.isArray(printer.cartouches) && printer.cartouches.length) {
+    return printer.cartouches
+      .filter((item) => item.value !== null && item.value !== undefined && item.value !== "")
+      .map((item) => ({
+        key: item.key || item.type,
+        label: String(item.nom || item.type || item.label || "Cartouche").trim(),
+        value: Number(item.value),
+        swatch: item.swatch || "#2b3038",
+      }));
+  }
   const standard = STANDARD
     .filter(([key]) => printer[key] !== null && printer[key] !== undefined && printer[key] !== "")
     .map(([key, label, swatch]) => ({ key, label, value: Number(printer[key]), swatch }));
   const extra = Array.isArray(printer.extra)
     ? printer.extra.map((item) => ({
       key: item.key,
-      label: item.label,
+      label: item.type || item.label,
       value: Number(item.value),
       swatch: item.swatch || "#2b3038",
     }))
