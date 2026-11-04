@@ -267,6 +267,9 @@ tr.attention td:first-child { box-shadow: inset 3px 0 0 var(--yellow); }
 .check { display: flex; gap: 8px; align-items: center; font-size: 0.95rem; color: var(--ink); font-weight: 500; }
 .kits { display: grid; gap: 8px; }
 .kit-row { display: grid; grid-template-columns: 1fr 110px auto; gap: 8px; }
+.check-cell { width: 42px; }
+.pick-card { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: start; }
+.pick-card label { padding-top: 14px; }
 .releve { margin-top: 12px; background: #f7f3ea; border-radius: 12px; padding: 10px 12px; color: var(--soft); }
 .releve span { display: block; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 4px; }
 .form-error { color: var(--crit); font-weight: 650; }

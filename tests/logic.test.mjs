@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { PRINTERS, RELEVE_DATE } from "../js/data.js";
-import { filtrer, minLevel, statut, resume } from "../js/logic.js";
+import { filtrer, minLevel, statut, resume, tonerLevels } from "../js/logic.js";
+import { buildPdf } from "../js/pdf.js";
 
 const byId = (id) => PRINTERS.find((printer) => printer.id === id);
 
@@ -43,5 +44,32 @@ for (const printer of PRINTERS) {
   const { niveauxLe, ...rest } = stored;
   assert.deepEqual(rest, printer);
 }
+
+const withExtra = {
+  nom: "Machine test",
+  observation: "RAS",
+  kits: [],
+  noir: 50,
+  cyan: null,
+  magenta: null,
+  jaune: null,
+  extra: [{ key: "ton-gris", label: "Gris", value: 8, swatch: "#888888" }],
+};
+assert.equal(tonerLevels(withExtra).length, 2);
+assert.equal(statut(withExtra), "critique");
+assert.equal(minLevel(withExtra), 8);
+assert.equal(tonerLevels(byId("imp-19")).length, 6);
+
+const pdf = buildPdf([byId("imp-19"), withExtra], {
+  title: "AUBM — Parc imprimantes",
+  subtitle: "Sélection · 2 machines",
+  generated: "4 novembre 2026",
+  tonerLevels,
+  statut,
+  statutLabel: (code) => code,
+});
+assert.equal(String.fromCharCode(...pdf.slice(0, 8)), "%PDF-1.4");
+assert.ok(pdf.includes(0xea), "accent ê conservé");
+assert.equal(String.fromCharCode(...pdf.slice(-5)), "%%EOF");
 
 console.log("tests ok", counts);

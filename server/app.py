@@ -156,43 +156,42 @@ def normalize(raw, forced_id=None):
         "niveaux_le": clean_instant(raw.get("niveauxLe")),
     }
 
-    extra = raw.get("extra")
+    extra = raw.get("extra") or []
+    if not isinstance(extra, list) or len(extra) > 20:
+        raise ApiError("Liste de toners invalide.", 400)
     toners = []
-    if isinstance(extra, list) and extra:
-        if len(extra) > 12:
-            raise ApiError("Trop de toners.", 400)
-        seen = set()
-        for index, item in enumerate(extra):
-            if not isinstance(item, dict):
-                raise ApiError("Toner invalide.", 400)
-            key = clean_text(item.get("key"), 40, True, "Le toner")
-            if not ID_RE.fullmatch(key) or key in seen:
-                raise ApiError("Canal de toner invalide.", 400)
-            seen.add(key)
-            swatch = clean_text(item.get("swatch"), 20) or "#2b3038"
-            if not SWATCH_RE.fullmatch(swatch):
-                swatch = "#2b3038"
-            toners.append({
-                "cle": key,
-                "libelle": clean_text(item.get("label"), 80, True, "Le toner"),
-                "pourcentage": percent(item.get("value"), required=True),
-                "swatch": swatch,
-                "extra": 1,
-                "ordre": index,
-            })
-    else:
-        for index, (key, label, swatch) in enumerate(STANDARD):
-            value = percent(raw.get(key))
-            if value is None:
-                continue
-            toners.append({
-                "cle": key,
-                "libelle": label,
-                "pourcentage": value,
-                "swatch": swatch,
-                "extra": 0,
-                "ordre": index,
-            })
+    seen = set()
+    for index, (key, label, swatch) in enumerate(STANDARD):
+        value = percent(raw.get(key))
+        if value is None:
+            continue
+        seen.add(key)
+        toners.append({
+            "cle": key,
+            "libelle": label,
+            "pourcentage": value,
+            "swatch": swatch,
+            "extra": 0,
+            "ordre": index,
+        })
+    for index, item in enumerate(extra):
+        if not isinstance(item, dict):
+            raise ApiError("Toner invalide.", 400)
+        key = clean_text(item.get("key"), 40, True, "Le toner")
+        if not ID_RE.fullmatch(key) or key in seen:
+            raise ApiError("Canal de toner invalide.", 400)
+        seen.add(key)
+        swatch = clean_text(item.get("swatch"), 20) or "#2b3038"
+        if not SWATCH_RE.fullmatch(swatch):
+            swatch = "#2b3038"
+        toners.append({
+            "cle": key,
+            "libelle": clean_text(item.get("label"), 80, True, "Le toner"),
+            "pourcentage": percent(item.get("value"), required=True),
+            "swatch": swatch,
+            "extra": 1,
+            "ordre": 10 + index,
+        })
 
     kits_raw = raw.get("kits") or []
     if not isinstance(kits_raw, list) or len(kits_raw) > 30:
@@ -374,26 +373,19 @@ def assemble(row, toners, kits):
     }
     if row["ecart"]:
         printer["ecart"] = True
+    by_key = {toner["cle"]: toner["pourcentage"] for toner in toners if not toner["extra"]}
+    for key, _label, _swatch in STANDARD:
+        printer[key] = by_key.get(key)
     extra_rows = [toner for toner in toners if toner["extra"]]
-    if extra_rows:
-        printer["extra"] = [
-            {
-                "key": toner["cle"],
-                "label": toner["libelle"],
-                "value": toner["pourcentage"],
-                "swatch": toner["swatch"] or "#2b3038",
-            }
-            for toner in extra_rows
-        ]
-        printer["noir"] = None
-        printer["cyan"] = None
-        printer["magenta"] = None
-        printer["jaune"] = None
-    else:
-        by_key = {toner["cle"]: toner["pourcentage"] for toner in toners}
-        for key, _label, _swatch in STANDARD:
-            printer[key] = by_key.get(key)
-        printer["extra"] = None
+    printer["extra"] = [
+        {
+            "key": toner["cle"],
+            "label": toner["libelle"],
+            "value": toner["pourcentage"],
+            "swatch": toner["swatch"] or "#2b3038",
+        }
+        for toner in extra_rows
+    ] or None
     return printer
 
 

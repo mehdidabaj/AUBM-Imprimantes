@@ -20,17 +20,18 @@ const STANDARD = [
 ];
 
 export function tonerLevels(printer) {
-  if (Array.isArray(printer.extra) && printer.extra.length) {
-    return printer.extra.map((item) => ({
+  const standard = STANDARD
+    .filter(([key]) => printer[key] !== null && printer[key] !== undefined && printer[key] !== "")
+    .map(([key, label, swatch]) => ({ key, label, value: Number(printer[key]), swatch }));
+  const extra = Array.isArray(printer.extra)
+    ? printer.extra.map((item) => ({
       key: item.key,
       label: item.label,
       value: Number(item.value),
       swatch: item.swatch || "#2b3038",
-    }));
-  }
-  return STANDARD
-    .filter(([key]) => printer[key] !== null && printer[key] !== undefined && printer[key] !== "")
-    .map(([key, label, swatch]) => ({ key, label, value: Number(printer[key]), swatch }));
+    }))
+    : [];
+  return [...standard, ...extra];
 }
 
 export function kitLevels(printer) {
@@ -177,7 +178,7 @@ export function resume(printers) {
 export function toCsv(printers) {
   const headers = [
     "Nom", "Département", "Emplacement", "Adresse", "Couleur",
-    "Noir", "Cyan", "Magenta", "Jaune", "Fourniture", "Kits",
+    "Noir", "Cyan", "Magenta", "Jaune", "Autres toners", "Fourniture", "Kits",
     "Observation", "État", "Relevé du 04/06/2025",
   ];
   const lines = [headers.join(";")];
@@ -198,8 +199,9 @@ export function toCsv(printers) {
       printer.cyan ?? "",
       printer.magenta ?? "",
       printer.jaune ?? "",
+      extras,
       printer.fourniture || "",
-      [kits, extras].filter(Boolean).join(" | "),
+      kits,
       printer.observation || "",
       statutLabel(statut(printer)),
       printer.releve || "",

@@ -97,12 +97,12 @@ Sur un serveur sans systemd, le script démarre MySQL et l'API directement. Le j
 ## Ce que l'on peut faire
 
 - Ajouter une imprimante : nom, département, emplacement, adresse, couleur, marque des cartouches.
-- Indiquer chaque toner et son pourcentage. Laisser vide un canal qui ne concerne pas la machine. Le traceur HP T930 reste suivi sur ses six encres.
+- Indiquer chaque toner et son pourcentage. Laisser vide un canal qui ne concerne pas la machine. Ajouter d'autres toners, avec un nom et un pourcentage. Le traceur HP T930 reste suivi sur ses six encres.
 - Ajouter les kits lorsqu'ils existent, avec un pourcentage ou la mention OK si le niveau n'est pas chiffré.
 - Noter l'observation finale (RAS ou le remplacement à prévoir).
 - Enregistrer une intervention (remplacement de toner, de kit, de photoconducteur).
 - Voir les machines à traiter (observation autre que RAS, ou consommable à 10 % ou moins) et celles à surveiller (jusqu'à 30 %, ou toner non renseigné).
 - Filtrer le parc par département, état, couleur, réseau ou antenne.
-- Exporter le parc en CSV (la liste filtrée, si un filtre est actif sur l'inventaire).
+- Exporter le parc en CSV ou en PDF. Dans l'inventaire, les machines cochées forment l'export. Sans coche, l'export reprend la liste filtrée.
 
 Pour le bureau Régisseur, le texte du relevé et les colonnes de pourcentages du tableau ne coïncident pas : la fiche le signale et retient les pourcentages des colonnes.

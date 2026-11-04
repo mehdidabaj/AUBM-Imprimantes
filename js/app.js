@@ -2,6 +2,7 @@ import {
   esc, isLocal, isAntenne, tonerLevels, kitLevels, statut, statutLabel,
   motifs, fabricant, filtrer, trier, parDepartement, resume, toCsv, formatDate,
 } from "./logic.js";
+import { buildPdf } from "./pdf.js";
 
 const RELEVE_DATE = "2025-06-04";
 
@@ -23,8 +24,11 @@ const state = {
   busy: false,
   filters: { q: "", dept: "", statut: "", couleur: "", lien: "", lieu: "", marque: "" },
   sort: { key: "statut", dir: "asc" },
+  selected: new Set(),
   toast: "",
 };
+
+const TONER_SWATCHES = ["#5b4636", "#6e4b86", "#2f6f5e", "#8d5a22", "#3e5278", "#7a3e4a"];
 
 async function api(path, { method = "GET", body } = {}) {
   let response;
@@ -157,7 +161,8 @@ function topbarHtml() {
     </div>
     <div class="top-actions">
       <a class="btn btn-primary" href="#/imprimante/nouveau">Ajouter</a>
-      <button class="btn" type="button" data-action="export">Exporter</button>
+      <button class="btn" type="button" data-action="export">CSV</button>
+      <button class="btn" type="button" data-action="export-pdf">PDF</button>
     </div>`;
 }
 
@@ -266,11 +271,12 @@ function parcHtml() {
 function resultsHtml() {
   const rows = visiblePrinters();
   return `
-    <p class="result-count">${rows.length} machine${rows.length > 1 ? "s" : ""}</p>
+    <p class="result-count">${rows.length} machine${rows.length > 1 ? "s" : ""}${selectionNote(rows)}</p>
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
+            <th><button type="button" data-action="select-visible">${allVisibleSelected(rows) ? "Aucune" : "Tout"}</button></th>
             ${th("nom", "Machine")}
             ${th("departement", "Département")}
             ${th("emplacement", "Emplacement")}
@@ -280,7 +286,7 @@ function resultsHtml() {
           </tr>
         </thead>
         <tbody>
-          ${rows.map(tableRow).join("") || `<tr><td colspan="6" class="empty">Aucune machine ne correspond.</td></tr>`}
+          ${rows.map(tableRow).join("") || `<tr><td colspan="7" class="empty">Aucune machine ne correspond.</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -322,6 +328,7 @@ function lieux() {
 function tableRow(printer) {
   const code = statut(printer);
   return `<tr class="row-link ${code}" data-href="#/imprimante/${esc(printer.id)}">
+    <td class="check-cell"><input type="checkbox" data-action="select" data-id="${esc(printer.id)}" ${state.selected.has(printer.id) ? "checked" : ""} aria-label="Sélectionner ${esc(printer.nom)}"></td>
     <td><a href="#/imprimante/${esc(printer.id)}"><strong>${esc(printer.nom)}</strong></a><small>${esc(fabricant(printer))}${printer.couleur ? " · couleur" : " · N&B"}</small></td>
     <td>${esc(printer.departement)}</td>
     <td>${esc(printer.emplacement)}</td>
@@ -333,12 +340,25 @@ function tableRow(printer) {
 
 function cardRow(printer) {
   const code = statut(printer);
-  return `<li><a href="#/imprimante/${esc(printer.id)}">
-    <span class="pill ${code}">${esc(statutLabel(code))}</span>
-    <strong>${esc(printer.nom)}</strong>
-    <small>${esc(printer.departement)} · ${esc(printer.emplacement)}</small>
-    ${miniLevels(printer)}
-  </a></li>`;
+  return `<li class="pick-card">
+    <label><input type="checkbox" data-action="select" data-id="${esc(printer.id)}" ${state.selected.has(printer.id) ? "checked" : ""} aria-label="Sélectionner ${esc(printer.nom)}"></label>
+    <a href="#/imprimante/${esc(printer.id)}">
+      <span class="pill ${code}">${esc(statutLabel(code))}</span>
+      <strong>${esc(printer.nom)}</strong>
+      <small>${esc(printer.departement)} · ${esc(printer.emplacement)}</small>
+      ${miniLevels(printer)}
+    </a>
+  </li>`;
+}
+
+function allVisibleSelected(rows) {
+  return rows.length > 0 && rows.every((printer) => state.selected.has(printer.id));
+}
+
+function selectionNote(rows) {
+  const count = rows.filter((printer) => state.selected.has(printer.id)).length;
+  if (!count) return ". Sans coche, le PDF et le CSV reprennent cette liste.";
+  return ` · ${count} sélectionnée${count > 1 ? "s" : ""} pour l'export.`;
 }
 
 function miniLevels(printer) {
@@ -414,6 +434,12 @@ function ficheHtml(id) {
         <h2>Niveaux</h2>
         <p class="hint">${creating || !printer.niveauxLe ? "Saisissez les pourcentages connus." : `Dernière lecture : ${esc(formatDate(printer.niveauxLe))}.`} Laissez vide ce qui ne concerne pas la machine.</p>
         <div class="gauges">${levelFields(printer)}</div>
+        <header class="card-head"><h2>Autres toners</h2>
+          <button class="btn ghost" type="button" data-action="add-toner">Ajouter</button>
+        </header>
+        <div id="toners" class="kits">
+          ${customToners(printer).map((item) => tonerRow(item.label, item.value, item.key, item.swatch)).join("")}
+        </div>
         <label class="field">Marque des cartouches
           <input name="fourniture" value="${esc(printer.fourniture || "")}" placeholder="HP, Canon, Ricoh…">
         </label>
@@ -480,9 +506,18 @@ function blankPrinter() {
   };
 }
 
+function customToners(printer) {
+  return (printer.extra || []).filter((item) => String(item.key || "").startsWith("ton-"));
+}
+
+function fixedExtra(printer) {
+  return (printer.extra || []).filter((item) => !String(item.key || "").startsWith("ton-"));
+}
+
 function levelFields(printer) {
-  if (printer.extra?.length) {
-    return printer.extra.map((item) => slider(item.key, item.label, item.value, item.swatch, true)).join("");
+  const fixed = fixedExtra(printer);
+  if (fixed.length && ["noir", "cyan", "magenta", "jaune"].every((key) => printer[key] == null || printer[key] === "")) {
+    return fixed.map((item) => slider(item.key, item.label, item.value, item.swatch, true)).join("");
   }
   const fields = [
     ["noir", "Noir", printer.noir, "#2b3038"],
@@ -507,6 +542,16 @@ function slider(key, label, value, swatch, extra) {
       <input type="number" min="0" max="100" step="1" name="${extra ? `extra:${key}` : key}" data-sync="${esc(key)}" value="${known ? shown : ""}" placeholder="—" inputmode="numeric" aria-label="${esc(label)} en pourcentage">
     </div>
     <div class="track" aria-hidden="true"><div class="fill" style="width:${known ? shown : 0}%;background:${swatch}"></div></div>
+  </div>`;
+}
+
+function tonerRow(label, level, key = "", swatch = "") {
+  const hasLevel = level !== null && level !== undefined && level !== "";
+  const tone = swatch || TONER_SWATCHES[0];
+  return `<div class="kit-row toner-row" data-key="${esc(key)}" data-swatch="${esc(tone)}">
+    <input name="tonerLabel" value="${esc(label)}" placeholder="Gris, noir photo, réservoir…" aria-label="Nom du toner">
+    <input name="tonerLevel" type="number" min="0" max="100" value="${hasLevel ? Number(level) : ""}" placeholder="%" aria-label="Pourcentage du toner">
+    <button class="btn ghost" type="button" data-action="remove-toner">Retirer</button>
   </div>`;
 }
 
@@ -548,12 +593,14 @@ function readPrinter(form, previous) {
   if (!nom || !departement || !emplacement) {
     return { error: "Le nom, le département et l'emplacement sont obligatoires." };
   }
-  const kits = [...form.querySelectorAll(".kit-row")].map((row) => {
+  const kits = [...form.querySelectorAll(".kit-row")].filter((row) => !row.classList.contains("toner-row")).map((row) => {
     const label = row.querySelector('[name="kitLabel"]').value.trim();
     const raw = row.querySelector('[name="kitLevel"]').value.trim();
     if (!label) return null;
     return { label, level: raw === "" ? null : clamp(raw) };
   }).filter(Boolean);
+  const added = readCustomToners(form);
+  if (added.error) return added;
 
   const next = {
     ...(previous || {}),
@@ -571,17 +618,21 @@ function readPrinter(form, previous) {
   };
 
   const before = JSON.stringify(tonerSnapshot(previous || {}));
-  if (previous?.extra?.length) {
-    next.extra = previous.extra.map((item) => ({
-      ...item,
-      value: clamp(data.get(`extra:${item.key}`), item.value),
-    }));
+  const fixed = fixedExtra(previous || {});
+  if (fixed.length && form.querySelector('[name^="extra:"]')) {
+    next.extra = [
+      ...fixed.map((item) => ({
+        ...item,
+        value: clamp(data.get(`extra:${item.key}`), item.value),
+      })),
+      ...added.rows,
+    ];
     next.noir = null;
     next.cyan = null;
     next.magenta = null;
     next.jaune = null;
   } else {
-    next.extra = null;
+    next.extra = added.rows.length ? added.rows : null;
     next.noir = emptyOrNumber(data.get("noir"));
     next.cyan = emptyOrNumber(data.get("cyan"));
     next.magenta = emptyOrNumber(data.get("magenta"));
@@ -591,6 +642,24 @@ function readPrinter(form, previous) {
   if (!previous || changed) next.niveauxLe = new Date().toISOString();
   else next.niveauxLe = previous.niveauxLe || RELEVE_DATE;
   return { printer: next, changed };
+}
+
+function readCustomToners(form) {
+  const rows = [];
+  for (const row of form.querySelectorAll(".toner-row")) {
+    const label = row.querySelector('[name="tonerLabel"]').value.trim();
+    const raw = row.querySelector('[name="tonerLevel"]').value.trim();
+    if (!label && raw === "") continue;
+    if (!label) return { error: "Nommez chaque toner ajouté." };
+    if (raw === "") return { error: `Indiquez le pourcentage de ${label}.` };
+    rows.push({
+      key: row.dataset.key || uid("ton"),
+      label,
+      value: clamp(raw),
+      swatch: row.dataset.swatch || TONER_SWATCHES[rows.length % TONER_SWATCHES.length],
+    });
+  }
+  return { rows };
 }
 
 function tonerSnapshot(printer) {
@@ -732,15 +801,62 @@ async function removePrinter(id) {
   }
 }
 
+function chosenPrinters() {
+  const current = route();
+  let base = state.printers;
+  if (current.name === "parc") base = visiblePrinters();
+  else if (current.name === "alertes") base = state.printers.filter((printer) => statut(printer) !== "ok");
+  else if (current.name === "imprimante" && current.id && current.id !== "nouveau") {
+    const one = printerById(current.id);
+    base = one ? [one] : [];
+  }
+  if (current.name === "parc") {
+    const picked = base.filter((printer) => state.selected.has(printer.id));
+    if (picked.length) return picked;
+  }
+  return base;
+}
+
 function exportCsv() {
-  const source = route().name === "parc" ? visiblePrinters() : state.printers;
+  const source = chosenPrinters();
+  if (!source.length) {
+    toast("Aucune machine à exporter.");
+    return;
+  }
   const blob = new Blob([toCsv(source)], { type: "text/csv;charset=utf-8" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
   link.download = "aubm-imprimantes.csv";
   link.click();
   URL.revokeObjectURL(link.href);
-  toast("Export CSV téléchargé.");
+  toast(`CSV de ${source.length} machine${source.length > 1 ? "s" : ""} téléchargé.`);
+}
+
+function exportPdf() {
+  const source = chosenPrinters();
+  if (!source.length) {
+    toast("Aucune machine à exporter.");
+    return;
+  }
+  const onParc = route().name === "parc";
+  const picked = onParc && visiblePrinters().some((printer) => state.selected.has(printer.id));
+  const filtered = onParc && Object.values(state.filters).some((value) => String(value || "").trim());
+  const subtitle = picked ? "Sélection" : (filtered ? "Liste filtrée" : "Parc complet");
+  const bytes = buildPdf(source, {
+    title: "AUBM — Parc imprimantes",
+    subtitle: `${subtitle} · ${source.length} machine${source.length > 1 ? "s" : ""}`,
+    generated: formatDate(new Date().toISOString(), true),
+    tonerLevels,
+    statut,
+    statutLabel,
+  });
+  const blob = new Blob([bytes], { type: "application/pdf" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = "aubm-imprimantes.pdf";
+  link.click();
+  URL.revokeObjectURL(link.href);
+  toast(`PDF de ${source.length} machine${source.length > 1 ? "s" : ""} téléchargé.`);
 }
 
 async function resetData() {
@@ -782,6 +898,37 @@ function onClick(event) {
   }
   if (action === "export") {
     exportCsv();
+    return;
+  }
+  if (action === "export-pdf") {
+    exportPdf();
+    return;
+  }
+  if (action === "select") {
+    const id = actionNode.dataset.id;
+    if (actionNode.checked) state.selected.add(id);
+    else state.selected.delete(id);
+    const note = document.querySelector(".result-count");
+    if (note) note.textContent = `${visiblePrinters().length} machine${visiblePrinters().length > 1 ? "s" : ""}${selectionNote(visiblePrinters())}`;
+    return;
+  }
+  if (action === "select-visible") {
+    const rows = visiblePrinters();
+    const clear = allVisibleSelected(rows);
+    for (const printer of rows) {
+      if (clear) state.selected.delete(printer.id);
+      else state.selected.add(printer.id);
+    }
+    paint({ preserveScroll: true });
+    return;
+  }
+  if (action === "add-toner") {
+    const swatch = TONER_SWATCHES[document.querySelectorAll(".toner-row").length % TONER_SWATCHES.length];
+    document.getElementById("toners").insertAdjacentHTML("beforeend", tonerRow("", "", uid("ton"), swatch));
+    return;
+  }
+  if (action === "remove-toner") {
+    actionNode.closest(".toner-row")?.remove();
     return;
   }
   if (action === "reset") {
@@ -836,7 +983,7 @@ function onClick(event) {
     return;
   }
   const row = event.target.closest("tr.row-link");
-  if (row && !event.target.closest("a, button")) {
+  if (row && !event.target.closest("a, button, input, label")) {
     location.hash = row.dataset.href;
   }
 }
