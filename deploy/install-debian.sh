@@ -136,7 +136,7 @@ done
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y default-mysql-server python3 python3-flask python3-pymysql curl openssl iproute2
+apt-get install -y default-mysql-server python3 python3-flask python3-pymysql curl openssl iproute2 snmp
 # Si Apache occupe déjà le port 80 pour GLPI, le premier démarrage de Nginx peut échouer.
 # La configuration posée plus bas n'écoute alors que sur le port demandé.
 apt-get install -y nginx || true
@@ -256,6 +256,22 @@ FLUSH PRIVILEGES;
 SQL
 
 mysql --protocol=socket -uroot --default-character-set=utf8mb4 "$AUBM_DB_NAME" < "$ROOT/server/schema.sql"
+mysql --protocol=socket -uroot --default-character-set=utf8mb4 "$AUBM_DB_NAME" <<'SQL'
+SET @exists := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE()
+     AND TABLE_NAME = 'imprimantes'
+     AND COLUMN_NAME = 'snmp_communaute'
+);
+SET @sql := IF(
+  @exists = 0,
+  'ALTER TABLE imprimantes ADD COLUMN snmp_communaute VARCHAR(64) NOT NULL DEFAULT ''public''',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+SQL
 
 python3 -m py_compile "$ROOT/server/app.py"
 

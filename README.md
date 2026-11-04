@@ -56,7 +56,7 @@ Le mot de passe du compte MySQL `aubm` est créé dans `/etc/aubm-imprimantes.en
 
 Deux profils :
 
-- **Administrateur** : parc, interventions, restauration du relevé, et page Utilisateurs.
+- **Administrateur** : parc, interventions, restauration du relevé, départements et page Utilisateurs.
 - **Consultation** : tableau, inventaire, alertes, fiches et journal en lecture, plus les exports CSV et PDF. L'ajout, la modification et la suppression du parc restent fermés.
 
 À la première installation, le script crée le compte `admin` (ou la valeur de `AUBM_ADMIN_USER`) et affiche son mot de passe une seule fois. Il est aussi écrit dans `/etc/aubm-imprimantes.env` (`AUBM_ADMIN_PASSWORD`). Une réinstallation ne le réaffiche pas, car le mot de passe peut avoir été changé dans l'application. La page Utilisateurs permet d'ajouter un compte, de changer son profil, de le désactiver ou de poser un nouveau mot de passe. Le dernier administrateur actif reste en place.
@@ -121,5 +121,7 @@ L'administrateur peut en plus :
 - Noter l'observation finale (RAS ou le remplacement à prévoir).
 - Enregistrer une intervention (remplacement de toner, de kit, de photoconducteur).
 - Créer les comptes et choisir leur profil.
+- Gérer les départements et les emplacements qui leur sont liés. La fiche propose ensuite ces emplacements selon le département choisi.
+- Lire les niveaux des cartouches et des kits sur une imprimante joignable par adresse IPv4. Le bouton « Lire les niveaux » interroge la machine en SNMP (communauté `public` par défaut, modifiable sur la fiche). « Lire les IP » parcourt les machines qui ont une adresse. Une adresse `Localhost` n'est pas interrogée.
 
 Pour le bureau Régisseur, le texte du relevé et les colonnes de pourcentages du tableau ne coïncident pas : la fiche le signale et retient les pourcentages des colonnes.

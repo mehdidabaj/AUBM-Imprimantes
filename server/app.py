@@ -16,6 +16,15 @@ from pymysql.err import IntegrityError, MySQLError
 from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from snmp_levels import (
+    COMMUNITY_RE,
+    SnmpError,
+    apply_reading,
+    interpret,
+    query_supplies,
+    valid_ipv4,
+)
+
 ROOT = Path(__file__).resolve().parent
 SEED_PATH = ROOT / "seed.json"
 
@@ -37,6 +46,7 @@ JOURNAL_TYPES = {
     "photoconducteur": "Remplacement de l'unité photoconductrice",
     "autre": "Autre intervention",
     "suppression": "Retrait du parc",
+    "releve-snmp": "Relevé des niveaux",
 }
 
 ID_RE = re.compile(r"[A-Za-z0-9_-]{1,40}")
@@ -140,6 +150,13 @@ def percent(value, required=False):
     return number
 
 
+def clean_community(value):
+    community = clean_text(value, 64) or "public"
+    if not COMMUNITY_RE.fullmatch(community):
+        raise ApiError("Communauté SNMP invalide.", 400)
+    return community
+
+
 def clean_instant(value):
     if value is None or value == "":
         return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -172,6 +189,7 @@ def normalize(raw, forced_id=None):
         "observation": clean_text(raw.get("observation"), 2000) or "RAS",
         "ecart": bool(raw.get("ecart")),
         "niveaux_le": clean_instant(raw.get("niveauxLe")),
+        "snmp_communaute": clean_community(raw.get("snmpCommunaute")),
     }
 
     extra = raw.get("extra") or []
@@ -251,14 +269,14 @@ def insert_printer(cur, printer):
         """
         INSERT INTO imprimantes
             (id, nom, departement, emplacement, adresse, couleur, fourniture,
-             releve, observation, ecart, niveaux_le)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             releve, observation, ecart, snmp_communaute, niveaux_le)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             printer["id"], printer["nom"], printer["departement"], printer["emplacement"],
             printer["adresse"], int(printer["couleur"]), printer["fourniture"],
             printer["releve"], printer["observation"], int(printer["ecart"]),
-            printer["niveaux_le"],
+            printer.get("snmp_communaute") or "public", printer["niveaux_le"],
         ),
     )
     insert_children(cur, printer)
@@ -273,13 +291,14 @@ def update_printer(cur, printer):
         UPDATE imprimantes
            SET nom = %s, departement = %s, emplacement = %s, adresse = %s,
                couleur = %s, fourniture = %s, releve = %s, observation = %s,
-               ecart = %s, niveaux_le = %s
+               ecart = %s, snmp_communaute = %s, niveaux_le = %s
          WHERE id = %s
         """,
         (
             printer["nom"], printer["departement"], printer["emplacement"], printer["adresse"],
             int(printer["couleur"]), printer["fourniture"], printer["releve"],
-            printer["observation"], int(printer["ecart"]), printer["niveaux_le"],
+            printer["observation"], int(printer["ecart"]),
+            printer.get("snmp_communaute") or "public", printer["niveaux_le"],
             printer["id"],
         ),
     )
@@ -339,7 +358,7 @@ def load_printers(cur):
     cur.execute(
         """
         SELECT id, nom, departement, emplacement, adresse, couleur, fourniture,
-               releve, observation, ecart, niveaux_le
+               releve, observation, ecart, snmp_communaute, niveaux_le
           FROM imprimantes
          ORDER BY nom, emplacement, id
         """
@@ -387,6 +406,7 @@ def assemble(row, toners, kits):
         "releve": row["releve"] or "",
         "observation": row["observation"] or "",
         "niveauxLe": row["niveaux_le"],
+        "snmpCommunaute": row.get("snmp_communaute") or "public",
         "kits": [{"label": kit["libelle"], "level": kit["pourcentage"]} for kit in kits],
     }
     if row["ecart"]:
@@ -460,6 +480,40 @@ def load_seed():
 def insert_seed(cur):
     for raw in load_seed():
         insert_printer(cur, normalize(raw))
+
+
+def sync_places(conn):
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT departement, emplacement FROM imprimantes")
+        for pair in cur.fetchall():
+            departement = (pair["departement"] or "").strip()
+            emplacement = (pair["emplacement"] or "").strip()
+            if not departement:
+                continue
+            cur.execute("INSERT IGNORE INTO departements (nom) VALUES (%s)", (departement,))
+            cur.execute("SELECT id FROM departements WHERE nom = %s", (departement,))
+            departement_id = cur.fetchone()["id"]
+            if emplacement:
+                cur.execute(
+                    "INSERT IGNORE INTO emplacements (departement_id, nom) VALUES (%s, %s)",
+                    (departement_id, emplacement),
+                )
+
+
+def load_places(cur):
+    cur.execute("SELECT id, nom FROM departements ORDER BY nom")
+    departements = []
+    for departement in cur.fetchall():
+        cur.execute(
+            "SELECT id, nom FROM emplacements WHERE departement_id = %s ORDER BY nom",
+            (departement["id"],),
+        )
+        departements.append({
+            "id": departement["id"],
+            "nom": departement["nom"],
+            "emplacements": [{"id": row["id"], "nom": row["nom"]} for row in cur.fetchall()],
+        })
+    return departements
 
 
 def seed_if_empty(conn):
@@ -820,6 +874,241 @@ def delete_printer(printer_id):
     return jsonify(run(write))
 
 
+@app.get("/api/places")
+@guarded()
+def list_places():
+    def read(conn):
+        with conn.cursor() as cur:
+            return {"departements": load_places(cur)}
+
+    return jsonify(run(read))
+
+
+@app.post("/api/departements")
+@guarded(admin=True)
+def create_departement():
+    nom = clean_text(payload().get("nom"), 80, True, "Le département")
+
+    def write(conn):
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM departements WHERE nom = %s", (nom,))
+            if cur.fetchone():
+                raise ApiError("Ce département existe déjà.", 409)
+            cur.execute("INSERT INTO departements (nom) VALUES (%s)", (nom,))
+            return {"departements": load_places(cur)}
+
+    return jsonify(run(write)), 201
+
+
+@app.put("/api/departements/<int:departement_id>")
+@guarded(admin=True)
+def update_departement(departement_id):
+    nom = clean_text(payload().get("nom"), 80, True, "Le département")
+
+    def write(conn):
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, nom FROM departements WHERE id = %s FOR UPDATE", (departement_id,))
+            current = cur.fetchone()
+            if not current:
+                raise ApiError("Département introuvable.", 404)
+            cur.execute("SELECT id FROM departements WHERE nom = %s AND id <> %s", (nom, departement_id))
+            if cur.fetchone():
+                raise ApiError("Ce département existe déjà.", 409)
+            cur.execute("UPDATE departements SET nom = %s WHERE id = %s", (nom, departement_id))
+            if current["nom"] != nom:
+                cur.execute(
+                    "UPDATE imprimantes SET departement = %s WHERE departement = %s",
+                    (nom, current["nom"]),
+                )
+            return {"departements": load_places(cur)}
+
+    return jsonify(run(write))
+
+
+@app.delete("/api/departements/<int:departement_id>")
+@guarded(admin=True)
+def delete_departement(departement_id):
+    def write(conn):
+        with conn.cursor() as cur:
+            cur.execute("SELECT nom FROM departements WHERE id = %s FOR UPDATE", (departement_id,))
+            current = cur.fetchone()
+            if not current:
+                raise ApiError("Département introuvable.", 404)
+            cur.execute("SELECT COUNT(*) AS n FROM imprimantes WHERE departement = %s", (current["nom"],))
+            if cur.fetchone()["n"]:
+                raise ApiError("Ce département est encore utilisé par une imprimante.", 409)
+            cur.execute("DELETE FROM departements WHERE id = %s", (departement_id,))
+            return {"departements": load_places(cur)}
+
+    return jsonify(run(write))
+
+
+@app.post("/api/emplacements")
+@guarded(admin=True)
+def create_emplacement():
+    body = payload()
+    nom = clean_text(body.get("nom"), 160, True, "L'emplacement")
+    try:
+        departement_id = int(body.get("departementId"))
+    except (TypeError, ValueError):
+        raise ApiError("Le département est obligatoire.", 400) from None
+
+    def write(conn):
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM departements WHERE id = %s", (departement_id,))
+            if not cur.fetchone():
+                raise ApiError("Département introuvable.", 404)
+            cur.execute(
+                "SELECT id FROM emplacements WHERE departement_id = %s AND nom = %s",
+                (departement_id, nom),
+            )
+            if cur.fetchone():
+                raise ApiError("Cet emplacement existe déjà pour ce département.", 409)
+            cur.execute(
+                "INSERT INTO emplacements (departement_id, nom) VALUES (%s, %s)",
+                (departement_id, nom),
+            )
+            return {"departements": load_places(cur)}
+
+    return jsonify(run(write)), 201
+
+
+@app.put("/api/emplacements/<int:emplacement_id>")
+@guarded(admin=True)
+def update_emplacement(emplacement_id):
+    nom = clean_text(payload().get("nom"), 160, True, "L'emplacement")
+
+    def write(conn):
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT emplacements.id, emplacements.nom, departements.nom AS departement
+                  FROM emplacements
+                  JOIN departements ON departements.id = emplacements.departement_id
+                 WHERE emplacements.id = %s
+                 FOR UPDATE
+                """,
+                (emplacement_id,),
+            )
+            current = cur.fetchone()
+            if not current:
+                raise ApiError("Emplacement introuvable.", 404)
+            cur.execute(
+                """
+                SELECT id FROM emplacements
+                 WHERE departement_id = (SELECT departement_id FROM emplacements WHERE id = %s)
+                   AND nom = %s AND id <> %s
+                """,
+                (emplacement_id, nom, emplacement_id),
+            )
+            if cur.fetchone():
+                raise ApiError("Cet emplacement existe déjà pour ce département.", 409)
+            cur.execute("UPDATE emplacements SET nom = %s WHERE id = %s", (nom, emplacement_id))
+            if current["nom"] != nom:
+                cur.execute(
+                    """
+                    UPDATE imprimantes
+                       SET emplacement = %s
+                     WHERE departement = %s AND emplacement = %s
+                    """,
+                    (nom, current["departement"], current["nom"]),
+                )
+            return {"departements": load_places(cur)}
+
+    return jsonify(run(write))
+
+
+@app.delete("/api/emplacements/<int:emplacement_id>")
+@guarded(admin=True)
+def delete_emplacement(emplacement_id):
+    def write(conn):
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT emplacements.nom, departements.nom AS departement
+                  FROM emplacements
+                  JOIN departements ON departements.id = emplacements.departement_id
+                 WHERE emplacements.id = %s
+                 FOR UPDATE
+                """,
+                (emplacement_id,),
+            )
+            current = cur.fetchone()
+            if not current:
+                raise ApiError("Emplacement introuvable.", 404)
+            cur.execute(
+                """
+                SELECT COUNT(*) AS n FROM imprimantes
+                 WHERE departement = %s AND emplacement = %s
+                """,
+                (current["departement"], current["nom"]),
+            )
+            if cur.fetchone()["n"]:
+                raise ApiError("Cet emplacement est encore utilisé par une imprimante.", 409)
+            cur.execute("DELETE FROM emplacements WHERE id = %s", (emplacement_id,))
+            return {"departements": load_places(cur)}
+
+    return jsonify(run(write))
+
+
+@app.post("/api/printers/<printer_id>/relever")
+@guarded(admin=True)
+def relever_printer(printer_id):
+    printer_id = clean_text(printer_id, 40, True, "Identifiant")
+    if not ID_RE.fullmatch(printer_id):
+        raise ApiError("Identifiant invalide.", 400)
+    body = payload()
+
+    def write(conn):
+        with conn.cursor() as cur:
+            current = load_one(cur, printer_id)
+            address = clean_text(body.get("adresse"), 80) or current["adresse"]
+            if not valid_ipv4(address):
+                raise ApiError("Indiquez une adresse IPv4 pour lire les niveaux.", 400)
+            community = clean_community(body.get("communaute") or current.get("snmpCommunaute"))
+            try:
+                supplies = query_supplies(address, community)
+            except SnmpError as exc:
+                raise ApiError(str(exc), 502) from exc
+            fixed = [
+                item for item in (current.get("extra") or [])
+                if not str(item.get("key") or "").startswith("ton-")
+            ]
+            plotter = bool(fixed) and all(current.get(key) is None for key in ("noir", "cyan", "magenta", "jaune"))
+            reading = interpret(supplies, plotter=plotter)
+            if not reading["channels"] and not reading["extras"] and not reading["kits"]:
+                raise ApiError("Les niveaux lus ne sont pas chiffrés.", 502)
+            apply_reading(current, reading)
+            for item in current.get("extra") or []:
+                if not item.get("key"):
+                    item["key"] = f"ton-{secrets.token_hex(4)}"
+            current["adresse"] = address
+            current["snmpCommunaute"] = community
+            current["niveauxLe"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            stored = normalize(current, forced_id=printer_id)
+            update_printer(cur, stored)
+            parts = []
+            if reading["channels"] or reading["extras"]:
+                parts.append(f"{len(reading['channels']) + len(reading['extras'])} toner(s)")
+            if reading["kits"]:
+                parts.append(f"{len(reading['kits'])} kit(s)")
+            entry = {
+                "imprimante_id": printer_id,
+                "imprimante_nom": current["nom"],
+                "type": "releve-snmp",
+                "type_label": JOURNAL_TYPES["releve-snmp"],
+                "detail": f"{address} · {', '.join(parts)}",
+            }
+            entry_id = insert_journal(cur, entry)
+            return {
+                "printer": load_one(cur, printer_id),
+                "entry": load_journal_one(cur, entry_id),
+                "message": "Niveaux lus sur l'imprimante.",
+            }
+
+    return jsonify(run(write))
+
+
 @app.post("/api/reset")
 @guarded(admin=True)
 def reset():
@@ -857,6 +1146,7 @@ def main():
     try:
         with connection() as conn:
             seed_if_empty(conn)
+            sync_places(conn)
             ensure_admin(conn)
     except ApiError as exc:
         raise SystemExit(str(exc)) from exc

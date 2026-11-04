@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS imprimantes (
     releve TEXT NOT NULL,
     observation TEXT NOT NULL,
     ecart TINYINT(1) NOT NULL DEFAULT 0,
+    snmp_communaute VARCHAR(64) NOT NULL DEFAULT 'public',
     niveaux_le VARCHAR(40) NULL,
     created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     PRIMARY KEY (id)
@@ -42,6 +43,23 @@ CREATE TABLE IF NOT EXISTS kits (
     KEY idx_kit_imprimante (imprimante_id, ordre),
     CONSTRAINT fk_kit_imprimante FOREIGN KEY (imprimante_id)
         REFERENCES imprimantes (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS departements (
+    id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    nom VARCHAR(80) NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uniq_dept_nom (nom)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS emplacements (
+    id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    departement_id INT UNSIGNED NOT NULL,
+    nom VARCHAR(160) NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uniq_lieu (departement_id, nom),
+    CONSTRAINT fk_lieu_dept FOREIGN KEY (departement_id)
+        REFERENCES departements (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS utilisateurs (

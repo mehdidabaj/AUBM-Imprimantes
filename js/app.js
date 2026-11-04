@@ -27,6 +27,7 @@ const state = {
   selected: new Set(),
   user: null,
   users: null,
+  places: [],
   toast: "",
 };
 
@@ -64,15 +65,17 @@ function roleLabel(role) {
 }
 
 async function refresh() {
-  const [printers, journal] = await Promise.all([
+  const [printers, journal, places] = await Promise.all([
     api("/api/printers"),
     api("/api/journal"),
+    api("/api/places"),
   ]);
-  if (!Array.isArray(printers.printers) || !Array.isArray(journal.entries)) {
+  if (!Array.isArray(printers.printers) || !Array.isArray(journal.entries) || !Array.isArray(places.departements)) {
     throw new Error("Réponse du serveur inattendue.");
   }
   state.printers = printers.printers;
   state.journal = journal.entries;
+  state.places = places.departements;
   state.error = "";
 }
 
@@ -91,7 +94,7 @@ function route() {
   const hash = location.hash.replace(/^#/, "") || "/tableau";
   const [path, id] = hash.split("/").filter(Boolean);
   if (path === "imprimante") return { name: "imprimante", id: id || "nouveau" };
-  if (path === "parc" || path === "alertes" || path === "journal" || path === "tableau" || path === "utilisateurs") return { name: path };
+  if (path === "parc" || path === "alertes" || path === "journal" || path === "tableau" || path === "utilisateurs" || path === "departements") return { name: path };
   return { name: "tableau" };
 }
 
@@ -125,6 +128,7 @@ function paint({ preserveScroll = false, focusId = "" } = {}) {
   document.getElementById("sidebar").innerHTML = sidebarHtml();
   document.getElementById("topbar").innerHTML = topbarHtml();
   document.getElementById("view").innerHTML = viewHtml();
+  bindComposers();
   if (focus) {
     const field = document.getElementById(focus);
     if (field) {
@@ -145,7 +149,10 @@ function sidebarHtml() {
     ["alertes", "Alertes"],
     ["journal", "Journal"],
   ];
-  if (canManage()) items.push(["utilisateurs", "Utilisateurs"]);
+  if (canManage()) {
+    items.push(["departements", "Départements"]);
+    items.push(["utilisateurs", "Utilisateurs"]);
+  }
   return `
     <a class="brand" href="#/tableau">
       <span class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
@@ -178,6 +185,7 @@ function topbarHtml() {
       ? ["Nouvelle imprimante", "Ajoutez une machine au parc."]
       : ["Fiche machine", "Niveaux, kits et suivi."],
     utilisateurs: ["Utilisateurs", "Comptes autorisés à ouvrir le parc."],
+    departements: ["Départements", "Chaque département regroupe ses emplacements."],
   };
   const [title, sub] = titles[current.name];
   return `
@@ -187,6 +195,7 @@ function topbarHtml() {
       <p>${esc(sub)}</p>
     </div>
     <div class="top-actions">
+      ${canManage() && current.name === "parc" ? `<button class="btn" type="button" data-action="relever-parc">Lire les IP</button>` : ""}
       ${canManage() ? `<a class="btn btn-primary" href="#/imprimante/nouveau">Ajouter</a>` : ""}
       <button class="btn" type="button" data-action="export">CSV</button>
       <button class="btn" type="button" data-action="export-pdf">PDF</button>
@@ -207,6 +216,7 @@ function viewHtml() {
   if (current.name === "alertes") return alertesHtml();
   if (current.name === "journal") return journalHtml();
   if (current.name === "utilisateurs") return utilisateursHtml();
+  if (current.name === "departements") return departementsHtml();
   return ficheHtml(current.id);
 }
 
@@ -367,7 +377,21 @@ function visiblePrinters() {
 }
 
 function departments() {
-  return [...new Set(state.printers.map((printer) => printer.departement).filter(Boolean))].sort((a, b) => a.localeCompare(b, "fr"));
+  const names = new Set(state.printers.map((printer) => printer.departement).filter(Boolean));
+  for (const departement of state.places || []) names.add(departement.nom);
+  return [...names].sort((a, b) => a.localeCompare(b, "fr"));
+}
+
+function placeOptions(departement, emplacement) {
+  const deptNames = departments();
+  if (departement && !deptNames.includes(departement)) deptNames.unshift(departement);
+  const selectedDept = departement || deptNames[0] || "";
+  const known = (state.places || []).find((item) => item.nom === selectedDept);
+  const lieux = known ? known.emplacements.map((item) => item.nom) : [];
+  if (emplacement && !lieux.includes(emplacement)) lieux.unshift(emplacement);
+  const deptHtml = deptNames.map((nom) => `<option value="${esc(nom)}" ${nom === selectedDept ? "selected" : ""}>${esc(nom)}</option>`).join("");
+  const lieuHtml = lieux.map((nom) => `<option value="${esc(nom)}" ${nom === emplacement ? "selected" : ""}>${esc(nom)}</option>`).join("");
+  return { departements: deptHtml || `<option value="">Aucun département</option>`, emplacements: lieuHtml || `<option value="">Aucun emplacement</option>` };
 }
 
 function marques() {
@@ -433,6 +457,45 @@ function alertesHtml() {
       ${items.length ? `<ul class="urgent">${items.map(urgentRow).join("")}</ul>` : `<p class="empty">Rien dans cette catégorie.</p>`}
     </section>`;
   }).join("");
+}
+
+function departementsHtml() {
+  if (!canManage()) {
+    return `<section class="card empty-block"><h2>Réservé aux administrateurs</h2><p>La gestion des départements n'est pas ouverte en consultation.</p><a class="btn" href="#/tableau">Retour au tableau</a></section>`;
+  }
+  const departements = state.places || [];
+  return `
+    <form id="dept-create" class="card">
+      <h2>Nouveau département</h2>
+      <div class="composer composer-pair">
+        <input name="nom" required maxlength="80" placeholder="DAF, DIR, Antenne…" aria-label="Nom du département">
+        <button class="btn btn-primary" type="submit">Ajouter</button>
+      </div>
+    </form>
+    ${departements.map((departement) => `
+      <section class="card">
+        <form data-dept-id="${departement.id}" class="dept-form">
+          <div class="composer composer-triple">
+            <input name="nom" required maxlength="80" value="${esc(departement.nom)}" aria-label="Nom du département">
+            <button class="btn" type="submit">Renommer</button>
+            <button class="btn danger" type="button" data-action="delete-dept" data-id="${departement.id}">Retirer</button>
+          </div>
+        </form>
+        <ul class="place-list">
+          ${departement.emplacements.map((lieu) => `
+            <li>
+              <form data-lieu-id="${lieu.id}">
+                <input name="nom" required maxlength="160" value="${esc(lieu.nom)}" aria-label="Nom de l'emplacement">
+                <button class="btn" type="submit">Renommer</button>
+                <button class="btn ghost" type="button" data-action="delete-lieu" data-id="${lieu.id}">Retirer</button>
+              </form>
+            </li>`).join("") || `<li class="fine">Aucun emplacement.</li>`}
+        </ul>
+        <form data-lieu-create="${departement.id}" class="composer composer-pair">
+          <input name="nom" required maxlength="160" placeholder="Nouvel emplacement" aria-label="Nouvel emplacement">
+          <button class="btn" type="submit">Ajouter l'emplacement</button>
+        </form>
+      </section>`).join("") || `<section class="card empty-block"><h2>Aucun département</h2><p>Ajoutez un département, puis ses emplacements.</p></section>`}`;
 }
 
 function utilisateursHtml() {
@@ -573,9 +636,12 @@ function ficheHtml(id) {
         <h2>Niveaux</h2>
         <p class="hint">${creating || !printer.niveauxLe ? "Saisissez les pourcentages connus." : `Dernière lecture : ${esc(formatDate(printer.niveauxLe))}.`} Laissez vide ce qui ne concerne pas la machine.</p>
         <div class="gauges">${levelFields(printer)}</div>
-        <header class="card-head"><h2>Autres toners</h2>
-          ${manage ? `<button class="btn ghost" type="button" data-action="add-toner">Ajouter</button>` : ""}
-        </header>
+        <header class="card-head"><h2>Autres toners</h2></header>
+        ${manage ? `<div class="composer" data-composer="toner">
+          <input name="draftToner" placeholder="Nom du toner" autocomplete="off" aria-label="Nom du nouveau toner">
+          <input name="draftTonerLevel" type="number" min="0" max="100" placeholder="%" aria-label="Pourcentage du nouveau toner">
+          <button class="btn" type="button" data-action="add-toner">Ajouter</button>
+        </div>` : ""}
         <div id="toners" class="kits">
           ${customToners(printer).map((item) => tonerRow(item.label, item.value, item.key, item.swatch, manage)).join("")}
         </div>
@@ -590,26 +656,31 @@ function ficheHtml(id) {
             <input name="nom" required value="${esc(printer.nom)}" placeholder="HP Color LaserJet M552">
           </label>
           <label class="field">Département
-            <input name="departement" required list="dept-list" value="${esc(printer.departement)}">
+            <select name="departement" required>${placeOptions(printer.departement, printer.emplacement).departements}</select>
           </label>
           <label class="field">Emplacement
-            <input name="emplacement" required list="lieu-list" value="${esc(printer.emplacement)}">
+            <select name="emplacement" required>${placeOptions(printer.departement, printer.emplacement).emplacements}</select>
           </label>
-          <label class="field span2">Adresse
-            <input name="adresse" value="${esc(printer.adresse)}" placeholder="195.200.200.12 ou Localhost">
+          <label class="field">Adresse IP
+            <input name="adresse" value="${esc(printer.adresse)}" placeholder="195.200.200.12">
           </label>
+          <label class="field">Communauté SNMP
+            <input name="snmpCommunaute" value="${esc(printer.snmpCommunaute || "public")}" autocomplete="off">
+          </label>
+          ${manage && !creating ? `<div class="span2"><button class="btn" type="button" data-action="relever" data-id="${esc(printer.id)}">Lire les niveaux</button><p class="fine">Interroge les cartouches et les kits de cette adresse IP.</p></div>` : ""}
           <label class="check span2"><input type="checkbox" name="couleur" ${printer.couleur ? "checked" : ""}> Imprimante couleur</label>
           <label class="field span2">Observation
             <textarea name="observation" rows="3" placeholder="RAS ou le remplacement à prévoir">${esc(printer.observation || "")}</textarea>
           </label>
         </div>
-        <datalist id="dept-list">${departments().map((dept) => `<option value="${esc(dept)}"></option>`).join("")}</datalist>
-        <datalist id="lieu-list">${lieux().map((lieu) => `<option value="${esc(lieu)}"></option>`).join("")}</datalist>
       </section>
       <section class="card span2">
-        <header class="card-head"><h2>Kits et consommables</h2>
-          ${manage ? `<button class="btn ghost" type="button" data-action="add-kit">Ajouter</button>` : ""}
-        </header>
+        <header class="card-head"><h2>Kits et consommables</h2></header>
+        ${manage ? `<div class="composer" data-composer="kit">
+          <input name="draftKit" placeholder="Nom du kit" autocomplete="off" aria-label="Nom du nouveau kit">
+          <input name="draftKitLevel" type="number" min="0" max="100" placeholder="%" aria-label="Pourcentage du nouveau kit">
+          <button class="btn" type="button" data-action="add-kit">Ajouter</button>
+        </div>` : ""}
         <div id="kits" class="kits">
           ${(printer.kits || []).map((kit) => kitRow(kit.label, kit.level, manage)).join("")}
         </div>
@@ -644,6 +715,7 @@ function blankPrinter() {
     observation: "",
     releve: "",
     niveauxLe: null,
+    snmpCommunaute: "public",
   };
 }
 
@@ -752,6 +824,7 @@ function readPrinter(form, previous) {
     adresse: String(data.get("adresse") || "").trim() || "Localhost",
     couleur: data.get("couleur") === "on",
     fourniture: String(data.get("fourniture") || "").trim(),
+    snmpCommunaute: String(data.get("snmpCommunaute") || "").trim() || "public",
     observation: String(data.get("observation") || "").trim() || "RAS",
     kits,
     releve: previous?.releve || "",
@@ -1190,6 +1263,154 @@ async function resetData() {
   }
 }
 
+function bindComposers() {
+  for (const button of document.querySelectorAll("[data-action=add-toner], [data-action=add-kit]")) {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (button.dataset.action === "add-toner") addDraftToner();
+      else addDraftKit();
+    });
+  }
+  for (const composer of document.querySelectorAll("[data-composer]")) {
+    composer.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (composer.dataset.composer === "toner") addDraftToner();
+      else addDraftKit();
+    });
+  }
+}
+
+function addDraftToner() {
+  const form = document.getElementById("printer-form");
+  const list = document.getElementById("toners");
+  if (!form || !list || !canManage()) return;
+  const label = form.draftToner.value.trim();
+  const raw = form.draftTonerLevel.value.trim();
+  if (!label) {
+    showFormError(form, "Nommez le toner à ajouter.");
+    form.draftToner.focus();
+    return;
+  }
+  if (raw === "" || Number.isNaN(Number(raw))) {
+    showFormError(form, `Indiquez le pourcentage de ${label}.`);
+    form.draftTonerLevel.focus();
+    return;
+  }
+  const value = Math.max(0, Math.min(100, Math.round(Number(raw))));
+  const swatch = TONER_SWATCHES[list.querySelectorAll(".toner-row").length % TONER_SWATCHES.length];
+  list.insertAdjacentHTML("beforeend", tonerRow(label, value, uid("ton"), swatch));
+  form.draftToner.value = "";
+  form.draftTonerLevel.value = "";
+  showFormError(form, "");
+  list.lastElementChild?.scrollIntoView({ block: "nearest" });
+  form.draftToner.focus();
+}
+
+function addDraftKit() {
+  const form = document.getElementById("printer-form");
+  const list = document.getElementById("kits");
+  if (!form || !list || !canManage()) return;
+  const label = form.draftKit.value.trim();
+  const raw = form.draftKitLevel.value.trim();
+  if (!label) {
+    showFormError(form, "Nommez le kit à ajouter.");
+    form.draftKit.focus();
+    return;
+  }
+  const level = raw === "" ? null : Math.max(0, Math.min(100, Math.round(Number(raw))));
+  if (raw !== "" && Number.isNaN(Number(raw))) {
+    showFormError(form, "Le pourcentage du kit est invalide.");
+    return;
+  }
+  list.insertAdjacentHTML("beforeend", kitRow(label, level));
+  form.draftKit.value = "";
+  form.draftKitLevel.value = "";
+  showFormError(form, "");
+  list.lastElementChild?.scrollIntoView({ block: "nearest" });
+  form.draftKit.focus();
+}
+
+function isIpv4(value) {
+  const parts = String(value || "").split(".");
+  return parts.length === 4 && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
+}
+
+async function releverPrinter(id) {
+  if (state.busy || !canManage()) return;
+  const form = document.getElementById("printer-form");
+  state.busy = true;
+  toast("Lecture des niveaux…");
+  try {
+    const data = await api(`/api/printers/${encodeURIComponent(id)}/relever`, {
+      method: "POST",
+      body: {
+        adresse: form?.adresse?.value?.trim() || "",
+        communaute: form?.snmpCommunaute?.value?.trim() || "public",
+      },
+    });
+    replacePrinter(data.printer);
+    if (data.entry) state.journal.unshift(data.entry);
+    toast(data.message || "Niveaux lus sur l'imprimante.");
+    paint();
+  } catch (err) {
+    if (!sessionLost(err)) toast(err.message);
+  } finally {
+    state.busy = false;
+  }
+}
+
+async function releverParc() {
+  if (state.busy || !canManage()) return;
+  const targets = state.printers.filter((printer) => isIpv4(printer.adresse));
+  if (!targets.length) {
+    toast("Aucune adresse IP à interroger.");
+    return;
+  }
+  state.busy = true;
+  let ok = 0;
+  let failed = 0;
+  toast(`Lecture de ${targets.length} adresse${targets.length > 1 ? "s" : ""}…`);
+  try {
+    for (const printer of targets) {
+      try {
+        const data = await api(`/api/printers/${encodeURIComponent(printer.id)}/relever`, {
+          method: "POST",
+          body: {},
+        });
+        replacePrinter(data.printer);
+        if (data.entry) state.journal.unshift(data.entry);
+        ok += 1;
+      } catch (err) {
+        if (sessionLost(err)) return;
+        failed += 1;
+      }
+    }
+  } finally {
+    state.busy = false;
+    paint();
+  }
+  toast(`${ok} imprimante${ok > 1 ? "s" : ""} lue${ok > 1 ? "s" : ""}${failed ? `, ${failed} sans réponse` : ""}.`);
+}
+
+async function savePlaces(path, method, body, success) {
+  if (state.busy) return;
+  state.busy = true;
+  try {
+    const saved = await api(path, { method, body });
+    state.places = saved.departements;
+    await refresh();
+    toast(success);
+    paint();
+  } catch (err) {
+    if (!sessionLost(err)) toast(err.message);
+  } finally {
+    state.busy = false;
+  }
+}
+
 function onClick(event) {
   const actionNode = event.target.closest("[data-action]");
   const action = actionNode?.dataset.action;
@@ -1233,12 +1454,7 @@ function onClick(event) {
   }
   if (action === "add-toner") {
     event.preventDefault();
-    if (!canManage()) return;
-    const swatch = TONER_SWATCHES[document.querySelectorAll(".toner-row").length % TONER_SWATCHES.length];
-    const list = document.getElementById("toners");
-    if (!list) return;
-    list.insertAdjacentHTML("beforeend", tonerRow("", "", uid("ton"), swatch));
-    list.lastElementChild?.querySelector("[name=tonerLabel]")?.focus();
+    addDraftToner();
     return;
   }
   if (action === "remove-toner") {
@@ -1283,11 +1499,37 @@ function onClick(event) {
   }
   if (action === "add-kit") {
     event.preventDefault();
-    if (!canManage()) return;
-    const list = document.getElementById("kits");
-    if (!list) return;
-    list.insertAdjacentHTML("beforeend", kitRow("", null));
-    list.lastElementChild?.querySelector("[name=kitLabel]")?.focus();
+    addDraftKit();
+    return;
+  }
+  if (action === "relever") {
+    event.preventDefault();
+    releverPrinter(actionNode.dataset.id);
+    return;
+  }
+  if (action === "relever-parc") {
+    event.preventDefault();
+    releverParc();
+    return;
+  }
+  if (action === "delete-dept") {
+    event.preventDefault();
+    if (actionNode.dataset.confirm !== "1") {
+      actionNode.dataset.confirm = "1";
+      actionNode.textContent = "Confirmer";
+      return;
+    }
+    savePlaces(`/api/departements/${actionNode.dataset.id}`, "DELETE", null, "Département retiré.");
+    return;
+  }
+  if (action === "delete-lieu") {
+    event.preventDefault();
+    if (actionNode.dataset.confirm !== "1") {
+      actionNode.dataset.confirm = "1";
+      actionNode.textContent = "Confirmer";
+      return;
+    }
+    savePlaces(`/api/emplacements/${actionNode.dataset.id}`, "DELETE", null, "Emplacement retiré.");
     return;
   }
   if (action === "remove-kit") {
@@ -1331,6 +1573,29 @@ function onSubmit(event) {
   if (form.id === "printer-form") {
     event.preventDefault();
     savePrinter(form);
+    return;
+  }
+  if (form.id === "dept-create") {
+    event.preventDefault();
+    savePlaces("/api/departements", "POST", { nom: form.nom.value.trim() }, "Département ajouté.");
+    return;
+  }
+  if (form.dataset.deptId) {
+    event.preventDefault();
+    savePlaces(`/api/departements/${form.dataset.deptId}`, "PUT", { nom: form.nom.value.trim() }, "Département renommé.");
+    return;
+  }
+  if (form.dataset.lieuId) {
+    event.preventDefault();
+    savePlaces(`/api/emplacements/${form.dataset.lieuId}`, "PUT", { nom: form.nom.value.trim() }, "Emplacement renommé.");
+    return;
+  }
+  if (form.dataset.lieuCreate) {
+    event.preventDefault();
+    savePlaces("/api/emplacements", "POST", {
+      departementId: Number(form.dataset.lieuCreate),
+      nom: form.nom.value.trim(),
+    }, "Emplacement ajouté.");
   }
   if (form.id === "intervention-form") {
     event.preventDefault();
@@ -1378,6 +1643,14 @@ function onInput(event) {
 
 function onChange(event) {
   const field = event.target;
+  if (field.name === "departement" && field.form?.id === "printer-form") {
+    const lieu = field.form.querySelector("[name=emplacement]");
+    const known = (state.places || []).find((item) => item.nom === field.value);
+    const lieux = known ? known.emplacements.map((item) => item.nom) : [];
+    lieu.innerHTML = lieux.map((nom) => `<option value="${esc(nom)}">${esc(nom)}</option>`).join("")
+      || `<option value="">Aucun emplacement</option>`;
+    return;
+  }
   if (field.dataset.filter && field.dataset.filter !== "q") {
     state.filters[field.dataset.filter] = field.value;
     paint({ preserveScroll: true });
