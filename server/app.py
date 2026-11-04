@@ -19,8 +19,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from snmp_levels import (
     COMMUNITY_RE,
     SnmpError,
-    apply_reading,
-    interpret,
+    named_supplies,
     query_supplies,
     valid_ipv4,
 )
@@ -34,6 +33,14 @@ STANDARD = (
     ("magenta", "Magenta", "#b5336b"),
     ("jaune", "Jaune", "#c89208"),
 )
+STANDARD_ALIAS = {
+    "noir": "noir",
+    "black": "noir",
+    "cyan": "cyan",
+    "magenta": "magenta",
+    "jaune": "jaune",
+    "yellow": "jaune",
+}
 
 JOURNAL_TYPES = {
     "mise-a-jour": "Mise à jour de la fiche",
@@ -166,6 +173,111 @@ def clean_instant(value):
     raise ApiError("Date de relevé invalide.", 400)
 
 
+def swatch_for(genre, requested=""):
+    swatch = requested or ""
+    if not SWATCH_RE.fullmatch(swatch):
+        key = STANDARD_ALIAS.get(genre.casefold())
+        found = next((item[2] for item in STANDARD if item[0] == key), "#5b4636")
+        swatch = found
+    return swatch
+
+
+def toners_from_channels(raw):
+    extra = raw.get("extra") or []
+    if not isinstance(extra, list) or len(extra) > 30:
+        raise ApiError("Liste de toners invalide.", 400)
+    toners = []
+    seen = set()
+    for index, (key, label, swatch) in enumerate(STANDARD):
+        value = percent(raw.get(key))
+        if value is None:
+            continue
+        seen.add(key)
+        toners.append({
+            "cle": key,
+            "libelle": label,
+            "marque": "",
+            "genre": label,
+            "pourcentage": value,
+            "swatch": swatch,
+            "extra": 0,
+            "ordre": index,
+        })
+    for index, item in enumerate(extra):
+        if not isinstance(item, dict):
+            raise ApiError("Toner invalide.", 400)
+        key = clean_text(item.get("key"), 40, True, "Le toner")
+        if not ID_RE.fullmatch(key) or key in seen:
+            raise ApiError("Canal de toner invalide.", 400)
+        seen.add(key)
+        label = clean_text(item.get("label"), 80, True, "Le toner")
+        toners.append({
+            "cle": key,
+            "libelle": label,
+            "marque": clean_text(item.get("marque"), 80),
+            "genre": clean_text(item.get("type"), 80) or label,
+            "pourcentage": percent(item.get("value"), required=True),
+            "swatch": swatch_for(label, clean_text(item.get("swatch"), 20)),
+            "extra": 1,
+            "ordre": 10 + index,
+        })
+    return toners
+
+
+def toners_from_cartouches(items):
+    if len(items) > 30:
+        raise ApiError("Liste de cartouches invalide.", 400)
+    toners = []
+    seen = set()
+    standard_keys = {key for key, _label, _swatch in STANDARD}
+    labels = {key: label for key, label, _swatch in STANDARD}
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise ApiError("Cartouche invalide.", 400)
+        genre = clean_text(item.get("type") or item.get("label"), 80, True, "Le type de cartouche")
+        marque = clean_text(item.get("marque"), 80)
+        value = percent(item.get("value"), required=True)
+        requested = clean_text(item.get("key"), 40)
+        swatch = swatch_for(genre, clean_text(item.get("swatch"), 20))
+        standard_key = ""
+        if requested in standard_keys and requested not in seen:
+            standard_key = requested
+        else:
+            alias = STANDARD_ALIAS.get(genre.casefold())
+            if alias and alias not in seen:
+                standard_key = alias
+        if standard_key:
+            seen.add(standard_key)
+            toners.append({
+                "cle": standard_key,
+                "libelle": labels[standard_key],
+                "marque": marque,
+                "genre": genre,
+                "pourcentage": value,
+                "swatch": swatch,
+                "extra": 0,
+                "ordre": index,
+            })
+            continue
+        key = requested if requested and ID_RE.fullmatch(requested) and requested not in seen else ""
+        if not key:
+            key = f"ton-{secrets.token_hex(4)}"
+            while key in seen:
+                key = f"ton-{secrets.token_hex(4)}"
+        seen.add(key)
+        toners.append({
+            "cle": key,
+            "libelle": genre,
+            "marque": marque,
+            "genre": genre,
+            "pourcentage": value,
+            "swatch": swatch,
+            "extra": 1,
+            "ordre": index,
+        })
+    return toners
+
+
 def normalize(raw, forced_id=None):
     if not isinstance(raw, dict):
         raise ApiError("Fiche invalide.", 400)
@@ -192,42 +304,16 @@ def normalize(raw, forced_id=None):
         "snmp_communaute": clean_community(raw.get("snmpCommunaute")),
     }
 
-    extra = raw.get("extra") or []
-    if not isinstance(extra, list) or len(extra) > 20:
-        raise ApiError("Liste de toners invalide.", 400)
-    toners = []
-    seen = set()
-    for index, (key, label, swatch) in enumerate(STANDARD):
-        value = percent(raw.get(key))
-        if value is None:
-            continue
-        seen.add(key)
-        toners.append({
-            "cle": key,
-            "libelle": label,
-            "pourcentage": value,
-            "swatch": swatch,
-            "extra": 0,
-            "ordre": index,
-        })
-    for index, item in enumerate(extra):
-        if not isinstance(item, dict):
-            raise ApiError("Toner invalide.", 400)
-        key = clean_text(item.get("key"), 40, True, "Le toner")
-        if not ID_RE.fullmatch(key) or key in seen:
-            raise ApiError("Canal de toner invalide.", 400)
-        seen.add(key)
-        swatch = clean_text(item.get("swatch"), 20) or "#2b3038"
-        if not SWATCH_RE.fullmatch(swatch):
-            swatch = "#2b3038"
-        toners.append({
-            "cle": key,
-            "libelle": clean_text(item.get("label"), 80, True, "Le toner"),
-            "pourcentage": percent(item.get("value"), required=True),
-            "swatch": swatch,
-            "extra": 1,
-            "ordre": 10 + index,
-        })
+    if isinstance(raw.get("cartouches"), list):
+        toners = toners_from_cartouches(raw.get("cartouches"))
+        brands = []
+        for toner in toners:
+            if toner["marque"] and toner["marque"] not in brands:
+                brands.append(toner["marque"])
+        if brands:
+            printer["fourniture"] = ", ".join(brands)[:80]
+    else:
+        toners = toners_from_channels(raw)
 
     kits_raw = raw.get("kits") or []
     if not isinstance(kits_raw, list) or len(kits_raw) > 30:
@@ -279,7 +365,19 @@ def insert_printer(cur, printer):
             printer.get("snmp_communaute") or "public", printer["niveaux_le"],
         ),
     )
+    ensure_place(cur, printer["departement"], printer["emplacement"])
     insert_children(cur, printer)
+
+
+def ensure_place(cur, departement, emplacement):
+    cur.execute("INSERT IGNORE INTO departements (nom) VALUES (%s)", (departement,))
+    cur.execute("SELECT id FROM departements WHERE nom = %s", (departement,))
+    row = cur.fetchone()
+    if row and emplacement:
+        cur.execute(
+            "INSERT IGNORE INTO emplacements (departement_id, nom) VALUES (%s, %s)",
+            (row["id"], emplacement),
+        )
 
 
 def update_printer(cur, printer):
@@ -304,6 +402,7 @@ def update_printer(cur, printer):
     )
     cur.execute("DELETE FROM toners WHERE imprimante_id = %s", (printer["id"],))
     cur.execute("DELETE FROM kits WHERE imprimante_id = %s", (printer["id"],))
+    ensure_place(cur, printer["departement"], printer["emplacement"])
     insert_children(cur, printer)
 
 
@@ -312,11 +411,12 @@ def insert_children(cur, printer):
         cur.execute(
             """
             INSERT INTO toners
-                (imprimante_id, cle, libelle, pourcentage, swatch, extra, ordre)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                (imprimante_id, cle, libelle, marque, genre, pourcentage, swatch, extra, ordre)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
-                printer["id"], toner["cle"], toner["libelle"], toner["pourcentage"],
+                printer["id"], toner["cle"], toner["libelle"], toner.get("marque") or "",
+                toner.get("genre") or toner["libelle"], toner["pourcentage"],
                 toner["swatch"], toner["extra"], toner["ordre"],
             ),
         )
@@ -366,7 +466,7 @@ def load_printers(cur):
     rows = cur.fetchall()
     cur.execute(
         """
-        SELECT imprimante_id, cle, libelle, pourcentage, swatch, extra, ordre
+        SELECT imprimante_id, cle, libelle, marque, genre, pourcentage, swatch, extra, ordre
           FROM toners
          ORDER BY imprimante_id, ordre, id
         """
@@ -419,11 +519,23 @@ def assemble(row, toners, kits):
         {
             "key": toner["cle"],
             "label": toner["libelle"],
+            "marque": toner.get("marque") or "",
+            "type": toner.get("genre") or toner["libelle"],
             "value": toner["pourcentage"],
             "swatch": toner["swatch"] or "#2b3038",
         }
         for toner in extra_rows
     ] or None
+    printer["cartouches"] = [
+        {
+            "key": toner["cle"],
+            "marque": toner.get("marque") or "",
+            "type": toner.get("genre") or toner["libelle"],
+            "value": toner["pourcentage"],
+            "swatch": toner["swatch"] or "#2b3038",
+        }
+        for toner in toners
+    ]
     return printer
 
 
@@ -840,7 +952,11 @@ def create_printer():
         with conn.cursor() as cur:
             insert_printer(cur, printer)
             entry_id = insert_journal(cur, entry)
-            return {"printer": load_one(cur, printer["id"]), "entry": load_journal_one(cur, entry_id)}
+            return {
+                "printer": load_one(cur, printer["id"]),
+                "entry": load_journal_one(cur, entry_id),
+                "departements": load_places(cur),
+            }
 
     return jsonify(run(write)), 201
 
@@ -856,7 +972,11 @@ def update_printer_route(printer_id):
         with conn.cursor() as cur:
             update_printer(cur, printer)
             entry_id = insert_journal(cur, entry)
-            return {"printer": load_one(cur, printer["id"]), "entry": load_journal_one(cur, entry_id)}
+            return {
+                "printer": load_one(cur, printer["id"]),
+                "entry": load_journal_one(cur, entry_id),
+                "departements": load_places(cur),
+            }
 
     return jsonify(run(write))
 
@@ -1068,6 +1188,51 @@ def delete_emplacement(emplacement_id):
     return jsonify(run(write))
 
 
+def merge_named(existing, incoming, field):
+    rows = [dict(item) for item in (existing or [])]
+    for item in incoming:
+        name = str(item.get(field) or "").casefold()
+        found = next((row for row in rows if str(row.get(field) or "").casefold() == name and name), None)
+        if found:
+            if "value" in item:
+                found["value"] = item["value"]
+            if "level" in item:
+                found["level"] = item["level"]
+            if item.get("swatch"):
+                found["swatch"] = item["swatch"]
+            continue
+        rows.append(dict(item))
+    return rows
+
+
+def read_snmp(address, community):
+    if not valid_ipv4(address):
+        raise ApiError("Indiquez une adresse IPv4 pour lire les niveaux.", 400)
+    try:
+        supplies = query_supplies(address, clean_community(community))
+    except SnmpError as exc:
+        raise ApiError(str(exc), 502) from exc
+    reading = named_supplies(supplies)
+    if not reading["cartouches"] and not reading["kits"]:
+        raise ApiError("Les niveaux lus ne sont pas chiffrés.", 502)
+    return reading
+
+
+def lecture_message(reading):
+    cartridges = len(reading["cartouches"])
+    kits = len(reading["kits"])
+    return f"{cartridges} cartouche{'s' if cartridges > 1 else ''} et {kits} kit{'s' if kits > 1 else ''} lus."
+
+
+@app.post("/api/snmp")
+@guarded(admin=True)
+def lecture_snmp():
+    body = payload()
+    address = clean_text(body.get("adresse"), 80, True, "L'adresse IP")
+    reading = read_snmp(address, body.get("communaute"))
+    return jsonify({**reading, "message": lecture_message(reading)})
+
+
 @app.post("/api/printers/<printer_id>/relever")
 @guarded(admin=True)
 def relever_printer(printer_id):
@@ -1080,41 +1245,21 @@ def relever_printer(printer_id):
         with conn.cursor() as cur:
             current = load_one(cur, printer_id)
             address = clean_text(body.get("adresse"), 80) or current["adresse"]
-            if not valid_ipv4(address):
-                raise ApiError("Indiquez une adresse IPv4 pour lire les niveaux.", 400)
             community = clean_community(body.get("communaute") or current.get("snmpCommunaute"))
-            try:
-                supplies = query_supplies(address, community)
-            except SnmpError as exc:
-                raise ApiError(str(exc), 502) from exc
-            fixed = [
-                item for item in (current.get("extra") or [])
-                if not str(item.get("key") or "").startswith("ton-")
-            ]
-            plotter = bool(fixed) and all(current.get(key) is None for key in ("noir", "cyan", "magenta", "jaune"))
-            reading = interpret(supplies, plotter=plotter)
-            if not reading["channels"] and not reading["extras"] and not reading["kits"]:
-                raise ApiError("Les niveaux lus ne sont pas chiffrés.", 502)
-            apply_reading(current, reading)
-            for item in current.get("extra") or []:
-                if not item.get("key"):
-                    item["key"] = f"ton-{secrets.token_hex(4)}"
+            reading = read_snmp(address, community)
+            current["cartouches"] = merge_named(current.get("cartouches"), reading["cartouches"], "type")
+            current["kits"] = merge_named(current.get("kits"), reading["kits"], "label")
             current["adresse"] = address
             current["snmpCommunaute"] = community
             current["niveauxLe"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             stored = normalize(current, forced_id=printer_id)
             update_printer(cur, stored)
-            parts = []
-            if reading["channels"] or reading["extras"]:
-                parts.append(f"{len(reading['channels']) + len(reading['extras'])} toner(s)")
-            if reading["kits"]:
-                parts.append(f"{len(reading['kits'])} kit(s)")
             entry = {
                 "imprimante_id": printer_id,
                 "imprimante_nom": current["nom"],
                 "type": "releve-snmp",
                 "type_label": JOURNAL_TYPES["releve-snmp"],
-                "detail": f"{address} · {', '.join(parts)}",
+                "detail": f"{address} · {lecture_message(reading)}",
             }
             entry_id = insert_journal(cur, entry)
             return {

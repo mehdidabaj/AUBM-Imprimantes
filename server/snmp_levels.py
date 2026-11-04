@@ -99,6 +99,31 @@ def looks_like_kit(label):
     return any(word in text for word in words)
 
 
+def named_supplies(supplies):
+    """Noms et niveaux tels que l'imprimante les expose, sans les regrouper."""
+    cartouches = []
+    kits = []
+    for item in supplies:
+        kind = item.get("type")
+        percent = percentage(item.get("level"), item.get("maximum"))
+        label = (item.get("description") or "Consommable").strip() or "Consommable"
+        if percent is None:
+            continue
+        if kind in KIT_TYPES or (kind in (None, 1, 2) and looks_like_kit(label)):
+            kits.append({"label": label[:160], "level": percent})
+            continue
+        if kind not in TONER_TYPES and kind not in (None, 1, 2):
+            continue
+        _color, swatch = classify(label)
+        cartouches.append({
+            "marque": "",
+            "type": label[:80],
+            "value": percent,
+            "swatch": swatch,
+        })
+    return {"cartouches": cartouches, "kits": kits}
+
+
 def interpret(supplies, plotter=False):
     channels = {}
     extras = []

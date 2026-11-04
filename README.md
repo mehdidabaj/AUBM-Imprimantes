@@ -123,7 +123,7 @@ Tout compte connecté peut :
 
 L'administrateur peut en plus :
 
-- Ajouter une imprimante : nom, département, emplacement, adresse, couleur, marque des cartouches.
+- Ajouter une imprimante : nom, département, emplacement, case couleur, et case adresse IP. Sans adresse, la machine est en poste local. Avec une adresse IPv4, la lecture SNMP remplit les noms et les niveaux des cartouches et des kits. Chaque cartouche se saisit aussi à la main : marque, type et pourcentage. Les kits aussi.
 - Indiquer chaque toner et son pourcentage. Laisser vide un canal qui ne concerne pas la machine. Ajouter d'autres toners, avec un nom et un pourcentage. Le traceur HP T930 reste suivi sur ses six encres.
 - Ajouter les kits lorsqu'ils existent, avec un pourcentage ou la mention OK si le niveau n'est pas chiffré.
 - Noter l'observation finale (RAS ou le remplacement à prévoir).

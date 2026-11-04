@@ -282,6 +282,36 @@ SET @sql := IF(
 PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
+
+SET @marque := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE()
+     AND TABLE_NAME = 'toners'
+     AND COLUMN_NAME = 'marque'
+);
+SET @sql := IF(
+  @marque = 0,
+  'ALTER TABLE toners ADD COLUMN marque VARCHAR(80) NOT NULL DEFAULT '''' AFTER libelle',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @genre := (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE()
+     AND TABLE_NAME = 'toners'
+     AND COLUMN_NAME = 'genre'
+);
+SET @sql := IF(
+  @genre = 0,
+  'ALTER TABLE toners ADD COLUMN genre VARCHAR(80) NOT NULL DEFAULT '''' AFTER marque',
+  'SELECT 1'
+);
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 SQL
 
 if [[ "$VIDER" -eq 1 ]]; then

@@ -2,7 +2,7 @@
 
 import unittest
 
-from snmp_levels import apply_reading, interpret, parse_walk, percentage, valid_ipv4
+from snmp_levels import apply_reading, interpret, named_supplies, parse_walk, percentage, valid_ipv4
 
 SAMPLE = """
 .1.3.6.1.2.1.43.11.1.1.5.1.1 3
@@ -55,6 +55,14 @@ class SnmpLevelsTest(unittest.TestCase):
         self.assertEqual(printer["extra"][0]["value"], 80)
         self.assertEqual(printer["extra"][1]["label"], "Noir photo")
         self.assertEqual(printer["kits"][0]["level"], 25)
+
+    def test_named_supplies_keep_the_printer_labels(self):
+        reading = named_supplies(parse_walk(SAMPLE))
+        types = [item["type"] for item in reading["cartouches"]]
+        self.assertEqual(types, ["Black Toner", "Cyan Cartridge", "Noir photo"])
+        self.assertEqual(reading["cartouches"][0]["value"], 40)
+        self.assertEqual(reading["cartouches"][1]["value"], 25)
+        self.assertEqual(reading["kits"], [{"label": "Kit de fusion", "level": 25}])
 
     def test_unknown_level_is_ignored(self):
         self.assertIsNone(percentage(-3, 100))

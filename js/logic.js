@@ -5,7 +5,7 @@ export function esc(value) {
 }
 
 export function isLocal(printer) {
-  return !printer.adresse || /^localhost$/i.test(String(printer.adresse).trim());
+  return !printer.adresse || /^(localhost|local)$/i.test(String(printer.adresse).trim());
 }
 
 export function isAntenne(printer) {
@@ -183,9 +183,14 @@ export function toCsv(printers) {
   ];
   const lines = [headers.join(";")];
   for (const printer of printers) {
-    const extras = printer.extra?.length
-      ? printer.extra.map((item) => `${item.label}:${item.value}%`).join(" | ")
-      : "";
+    const extras = printer.cartouches?.length
+      ? printer.cartouches
+        .filter((item) => !["noir", "cyan", "magenta", "jaune"].includes(item.key))
+        .map((item) => `${[item.marque, item.type].filter(Boolean).join(" ")}:${item.value}%`)
+        .join(" | ")
+      : (printer.extra?.length
+        ? printer.extra.map((item) => `${item.label}:${item.value}%`).join(" | ")
+        : "");
     const kits = (printer.kits || [])
       .map((kit) => (kit.level === null || kit.level === undefined ? `${kit.label}:OK` : `${kit.label}:${kit.level}%`))
       .join(" | ");

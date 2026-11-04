@@ -286,6 +286,23 @@ tr.attention td:first-child { box-shadow: inset 3px 0 0 var(--yellow); }
 .composer .btn, .place-list .btn { white-space: nowrap; }
 .composer-pair { grid-template-columns: minmax(0, 1fr) auto; }
 .composer-triple { grid-template-columns: minmax(0, 1fr) auto auto; }
+.supply-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr) 90px auto;
+  gap: 8px;
+  align-items: center;
+}
+.kits .supply-grid { margin-top: 8px; }
+.supply-grid input {
+  background: var(--elev);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 9px 10px;
+  min-width: 0;
+}
+.ip-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+.ip-fields[hidden], .ip-local[hidden] { display: none; }
+.ip-fields .span2 { grid-column: 1 / -1; }
 .check-cell { width: 42px; }
 .pick-card { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: start; }
 .pick-card label { padding-top: 14px; }
@@ -359,7 +376,7 @@ fieldset.plain:disabled select {
 .user-card:first-child { border-top: 0; padding-top: 0; }
 
 @media (max-width: 980px) {
-  .kpis, .split, .split.thirds, .fiche-grid, .form-grid, .composer, .place-list form { grid-template-columns: 1fr; }
+  .kpis, .split, .split.thirds, .fiche-grid, .form-grid, .composer, .place-list form, .supply-grid, .ip-fields { grid-template-columns: 1fr; }
   .urgent a { grid-template-columns: 1fr; }
   .sidebar { position: fixed; inset: 0 auto 0 0; z-index: 20; transform: translateX(-105%); }
   body.nav-open .sidebar { transform: none; }

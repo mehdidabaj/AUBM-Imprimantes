@@ -421,7 +421,7 @@ function tableRow(printer) {
     <td><a href="#/imprimante/${esc(printer.id)}"><strong>${esc(printer.nom)}</strong></a><small>${esc(fabricant(printer))}${printer.couleur ? " · couleur" : " · N&B"}</small></td>
     <td>${esc(printer.departement)}</td>
     <td>${esc(printer.emplacement)}</td>
-    <td><code>${esc(printer.adresse)}</code></td>
+    <td><code>${esc(adresseLabel(printer))}</code></td>
     <td>${miniLevels(printer)}</td>
     <td><span class="pill ${code}">${esc(statutLabel(code))}</span></td>
   </tr>`;
@@ -629,13 +629,14 @@ function ficheHtml(id) {
   }
   const code = creating ? "ok" : statut(printer);
   const history = state.journal.filter((entry) => entry.printerId === printer.id);
+  const hasIp = isIpv4(printer.adresse);
   return `
     <p class="back"><a href="#/parc">← Retour au parc</a></p>
     <header class="fiche-head">
       <div>
         <p class="eyebrow">${creating ? "Création" : esc(printer.departement)}</p>
         <h2>${creating ? "Nouvelle imprimante" : esc(printer.nom)}</h2>
-        ${creating ? "" : `<p class="subline">${esc(printer.emplacement)} · <code>${esc(printer.adresse)}</code></p>`}
+        ${creating ? "" : `<p class="subline">${esc(printer.emplacement)} · <code>${esc(adresseLabel(printer))}</code></p>`}
       </div>
       ${creating ? "" : `<span class="pill ${code}">${esc(statutLabel(code))}</span>`}
     </header>
@@ -644,46 +645,48 @@ function ficheHtml(id) {
     <form id="printer-form" data-id="${esc(printer.id || "")}">
       <fieldset class="plain" ${manage ? "" : "disabled"}>
       <div class="fiche-grid">
-      <section class="card">
-        <h2>Niveaux</h2>
-        <p class="hint">${creating || !printer.niveauxLe ? "Saisissez les pourcentages connus." : `Dernière lecture : ${esc(formatDate(printer.niveauxLe))}.`} Laissez vide ce qui ne concerne pas la machine.</p>
-        <div class="gauges">${levelFields(printer)}</div>
-        <header class="card-head"><h2>Autres toners</h2></header>
-        ${manage ? `<div class="composer" data-composer="toner">
-          <input name="draftToner" placeholder="Nom du toner" autocomplete="off" aria-label="Nom du nouveau toner">
-          <input name="draftTonerLevel" type="number" min="0" max="100" placeholder="%" aria-label="Pourcentage du nouveau toner">
-          <button class="btn" type="button" data-action="add-toner">Ajouter</button>
-        </div>` : ""}
-        <div id="toners" class="kits">
-          ${customToners(printer).map((item) => tonerRow(item.label, item.value, item.key, item.swatch, manage)).join("")}
-        </div>
-        <label class="field">Marque des cartouches
-          <input name="fourniture" value="${esc(printer.fourniture || "")}" placeholder="HP, Canon, Ricoh…">
-        </label>
-      </section>
-      <section class="card">
+      <section class="card span2">
         <h2>Identité</h2>
         <div class="form-grid">
           <label class="field span2">Nom
             <input name="nom" required value="${esc(printer.nom)}" placeholder="HP Color LaserJet M552">
           </label>
           <label class="field">Département
-            <select name="departement" required>${placeOptions(printer.departement, printer.emplacement).departements}</select>
+            <input name="departement" required maxlength="80" list="dept-list" value="${esc(printer.departement)}" placeholder="DAF, DIR, Antenne…">
           </label>
           <label class="field">Emplacement
-            <select name="emplacement" required>${placeOptions(printer.departement, printer.emplacement).emplacements}</select>
+            <input name="emplacement" required maxlength="160" list="lieu-list" value="${esc(printer.emplacement)}" placeholder="Bureau, couloir…">
           </label>
-          <label class="field">Adresse IP
-            <input name="adresse" value="${esc(printer.adresse)}" placeholder="195.200.200.12">
-          </label>
-          <label class="field">Communauté SNMP
-            <input name="snmpCommunaute" value="${esc(printer.snmpCommunaute || "public")}" autocomplete="off">
-          </label>
-          ${manage && !creating ? `<div class="span2"><button class="btn" type="button" data-action="relever" data-id="${esc(printer.id)}">Lire les niveaux</button><p class="fine">Interroge les cartouches et les kits de cette adresse IP.</p></div>` : ""}
+          <datalist id="dept-list">${departments().map((nom) => `<option value="${esc(nom)}"></option>`).join("")}</datalist>
+          <datalist id="lieu-list">${lieuOptions(printer.departement).map((nom) => `<option value="${esc(nom)}"></option>`).join("")}</datalist>
           <label class="check span2"><input type="checkbox" name="couleur" ${printer.couleur ? "checked" : ""}> Imprimante couleur</label>
+          <label class="check span2"><input type="checkbox" name="aAdresse" ${hasIp ? "checked" : ""}> Cette imprimante a une adresse IP</label>
+          <div class="ip-fields span2" ${hasIp ? "" : "hidden"}>
+            <label class="field">Adresse IP
+              <input name="adresse" value="${hasIp ? esc(printer.adresse) : ""}" placeholder="195.200.200.12" inputmode="decimal">
+            </label>
+            <label class="field">Communauté SNMP
+              <input name="snmpCommunaute" value="${esc(printer.snmpCommunaute || "public")}" autocomplete="off">
+            </label>
+            ${manage ? `<div class="span2"><button class="btn" type="button" data-action="lire-snmp">Lire les cartouches et les kits</button><p class="fine">La requête SNMP remplit les noms et les niveaux. Vous pouvez les corriger avant d'enregistrer.</p></div>` : ""}
+          </div>
+          <p class="fine ip-local span2" ${hasIp ? "hidden" : ""}>Sans adresse IP, la machine est enregistrée comme poste local.</p>
           <label class="field span2">Observation
             <textarea name="observation" rows="3" placeholder="RAS ou le remplacement à prévoir">${esc(printer.observation || "")}</textarea>
           </label>
+        </div>
+      </section>
+      <section class="card span2">
+        <h2>Cartouches</h2>
+        <p class="hint">${creating || !printer.niveauxLe ? "Indiquez la marque, le type et le pourcentage." : `Dernière lecture : ${esc(formatDate(printer.niveauxLe))}.`} La lecture SNMP remplit le type et le niveau.</p>
+        ${manage ? `<div class="supply-grid composer" data-composer="toner">
+          <input name="draftMarque" placeholder="Marque" autocomplete="off" aria-label="Marque de la cartouche">
+          <input name="draftType" placeholder="Type" autocomplete="off" aria-label="Type de cartouche">
+          <input name="draftNiveau" type="number" min="0" max="100" placeholder="%" aria-label="Pourcentage de la cartouche">
+          <button class="btn" type="button" data-action="add-toner">Ajouter</button>
+        </div>` : ""}
+        <div id="cartouches" class="kits">
+          ${cartouchesOf(printer).map((item) => cartoucheRow(item, manage)).join("")}
         </div>
       </section>
       <section class="card span2">
@@ -723,12 +726,52 @@ function blankPrinter() {
     magenta: null,
     jaune: null,
     extra: null,
+    cartouches: [],
     kits: [],
     observation: "",
     releve: "",
     niveauxLe: null,
     snmpCommunaute: "public",
   };
+}
+
+function adresseLabel(printer) {
+  return isLocal(printer) ? "Local" : printer.adresse;
+}
+
+function lieuOptions(departement) {
+  const known = (state.places || []).find((item) => item.nom === departement);
+  return known ? known.emplacements.map((item) => item.nom) : [];
+}
+
+function cartouchesOf(printer) {
+  if (Array.isArray(printer.cartouches) && printer.cartouches.length) return printer.cartouches;
+  const rows = [];
+  for (const [key, label] of [["noir", "Noir"], ["cyan", "Cyan"], ["magenta", "Magenta"], ["jaune", "Jaune"]]) {
+    if (printer[key] !== null && printer[key] !== undefined && printer[key] !== "") {
+      rows.push({ key, marque: "", type: label, value: printer[key], swatch: "" });
+    }
+  }
+  for (const item of printer.extra || []) {
+    rows.push({
+      key: item.key,
+      marque: item.marque || "",
+      type: item.type || item.label,
+      value: item.value,
+      swatch: item.swatch || "",
+    });
+  }
+  return rows;
+}
+
+function cartoucheRow(item, editable = true) {
+  const hasLevel = item.value !== null && item.value !== undefined && item.value !== "";
+  return `<div class="supply-grid cartouche-row" data-key="${esc(item.key || "")}" data-swatch="${esc(item.swatch || "")}">
+    <input name="cartoucheMarque" value="${esc(item.marque || "")}" placeholder="Marque" aria-label="Marque de la cartouche">
+    <input name="cartoucheType" value="${esc(item.type || "")}" placeholder="Type" aria-label="Type de cartouche">
+    <input name="cartoucheNiveau" type="number" min="0" max="100" value="${hasLevel ? Number(item.value) : ""}" placeholder="%" aria-label="Pourcentage de la cartouche">
+    ${editable ? `<button class="btn ghost" type="button" data-action="remove-toner">Retirer</button>` : ""}
+  </div>`;
 }
 
 function customToners(printer) {
@@ -818,14 +861,21 @@ function readPrinter(form, previous) {
   if (!nom || !departement || !emplacement) {
     return { error: "Le nom, le département et l'emplacement sont obligatoires." };
   }
-  const kits = [...form.querySelectorAll(".kit-row")].filter((row) => !row.classList.contains("toner-row")).map((row) => {
+  const hasIp = data.get("aAdresse") === "on";
+  let adresse = "Localhost";
+  if (hasIp) {
+    adresse = String(data.get("adresse") || "").trim();
+    if (!isIpv4(adresse)) return { error: "Indiquez une adresse IPv4, ou décochez l'adresse IP pour un poste local." };
+  }
+  const kits = [...form.querySelectorAll(".kit-row")].map((row) => {
     const label = row.querySelector('[name="kitLabel"]').value.trim();
     const raw = row.querySelector('[name="kitLevel"]').value.trim();
     if (!label) return null;
     return { label, level: raw === "" ? null : clamp(raw) };
   }).filter(Boolean);
-  const added = readCustomToners(form);
-  if (added.error) return added;
+  const cartouches = readCartouches(form);
+  if (cartouches.error) return cartouches;
+  const brands = [...new Set(cartouches.rows.map((item) => item.marque).filter(Boolean))];
 
   const next = {
     ...(previous || {}),
@@ -833,54 +883,35 @@ function readPrinter(form, previous) {
     nom,
     departement,
     emplacement,
-    adresse: String(data.get("adresse") || "").trim() || "Localhost",
+    adresse,
     couleur: data.get("couleur") === "on",
-    fourniture: String(data.get("fourniture") || "").trim(),
+    fourniture: brands.join(", ") || previous?.fourniture || "",
     snmpCommunaute: String(data.get("snmpCommunaute") || "").trim() || "public",
     observation: String(data.get("observation") || "").trim() || "RAS",
+    cartouches: cartouches.rows,
     kits,
     releve: previous?.releve || "",
     ecart: previous?.ecart || false,
   };
-
-  const before = JSON.stringify(tonerSnapshot(previous || {}));
-  const fixed = fixedExtra(previous || {});
-  if (fixed.length && form.querySelector('[name^="extra:"]')) {
-    next.extra = [
-      ...fixed.map((item) => ({
-        ...item,
-        value: clamp(data.get(`extra:${item.key}`), item.value),
-      })),
-      ...added.rows,
-    ];
-    next.noir = null;
-    next.cyan = null;
-    next.magenta = null;
-    next.jaune = null;
-  } else {
-    next.extra = added.rows.length ? added.rows : null;
-    next.noir = emptyOrNumber(data.get("noir"));
-    next.cyan = emptyOrNumber(data.get("cyan"));
-    next.magenta = emptyOrNumber(data.get("magenta"));
-    next.jaune = emptyOrNumber(data.get("jaune"));
-  }
-  const changed = before !== JSON.stringify(tonerSnapshot(next));
+  const changed = JSON.stringify(tonerSnapshot(previous || {})) !== JSON.stringify(tonerSnapshot(next));
   if (!previous || changed) next.niveauxLe = new Date().toISOString();
   else next.niveauxLe = previous.niveauxLe || RELEVE_DATE;
   return { printer: next, changed };
 }
 
-function readCustomToners(form) {
+function readCartouches(form) {
   const rows = [];
-  for (const row of form.querySelectorAll(".toner-row")) {
-    const label = row.querySelector('[name="tonerLabel"]').value.trim();
-    const raw = row.querySelector('[name="tonerLevel"]').value.trim();
-    if (!label && raw === "") continue;
-    if (!label) return { error: "Nommez chaque toner ajouté." };
-    if (raw === "") return { error: `Indiquez le pourcentage de ${label}.` };
+  for (const row of form.querySelectorAll(".cartouche-row")) {
+    const marque = row.querySelector('[name="cartoucheMarque"]').value.trim();
+    const type = row.querySelector('[name="cartoucheType"]').value.trim();
+    const raw = row.querySelector('[name="cartoucheNiveau"]').value.trim();
+    if (!marque && !type && raw === "") continue;
+    if (!type) return { error: "Indiquez le type de chaque cartouche." };
+    if (raw === "") return { error: `Indiquez le pourcentage de ${type}.` };
     rows.push({
       key: row.dataset.key || uid("ton"),
-      label,
+      marque,
+      type,
       value: clamp(raw),
       swatch: row.dataset.swatch || TONER_SWATCHES[rows.length % TONER_SWATCHES.length],
     });
@@ -890,11 +921,11 @@ function readCustomToners(form) {
 
 function tonerSnapshot(printer) {
   return {
-    noir: printer.noir ?? null,
-    cyan: printer.cyan ?? null,
-    magenta: printer.magenta ?? null,
-    jaune: printer.jaune ?? null,
-    extra: printer.extra || null,
+    cartouches: cartouchesOf(printer).map((item) => ({
+      marque: item.marque || "",
+      type: item.type || "",
+      value: item.value ?? null,
+    })),
     kits: printer.kits || [],
   };
 }
@@ -1111,6 +1142,7 @@ async function savePrinter(form) {
       body: { printer: result.printer, journal },
     });
     replacePrinter(saved.printer);
+    if (Array.isArray(saved.departements)) state.places = saved.departements;
     state.journal.unshift(saved.entry);
     toast(previous ? "Fiche enregistrée." : "Imprimante ajoutée au parc.");
     location.hash = `#/imprimante/${saved.printer.id}`;
@@ -1128,6 +1160,7 @@ function clonePrinter(printer) {
   return {
     ...printer,
     kits: (printer.kits || []).map((kit) => ({ ...kit })),
+    cartouches: cartouchesOf(printer).map((item) => ({ ...item })),
     extra: printer.extra ? printer.extra.map((item) => ({ ...item })) : null,
   };
 }
@@ -1147,12 +1180,11 @@ async function applyIntervention(form) {
     "toner-jaune": "jaune",
   };
   if (map[type]) {
-    if (next.extra?.length) {
-      const target = next.extra.find((item) => item.key === map[type]);
-      if (target) target.value = 100;
-    } else if (next[map[type]] !== null && next[map[type]] !== undefined) {
-      next[map[type]] = 100;
-    }
+    const key = map[type];
+    const target = (next.cartouches || []).find((item) => item.key === key)
+      || (next.cartouches || []).find((item) => String(item.type || "").toLowerCase() === key);
+    if (target) target.value = 100;
+    else if (next[key] !== null && next[key] !== undefined) next[key] = 100;
     next.niveauxLe = new Date().toISOString();
   }
   if (type === "kit") {
@@ -1297,28 +1329,30 @@ function bindComposers() {
 
 function addDraftToner() {
   const form = document.getElementById("printer-form");
-  const list = document.getElementById("toners");
+  const list = document.getElementById("cartouches");
   if (!form || !list || !canManage()) return;
-  const label = form.draftToner.value.trim();
-  const raw = form.draftTonerLevel.value.trim();
-  if (!label) {
-    showFormError(form, "Nommez le toner à ajouter.");
-    form.draftToner.focus();
+  const marque = form.draftMarque.value.trim();
+  const type = form.draftType.value.trim();
+  const raw = form.draftNiveau.value.trim();
+  if (!type) {
+    showFormError(form, "Indiquez le type de la cartouche à ajouter.");
+    form.draftType.focus();
     return;
   }
   if (raw === "" || Number.isNaN(Number(raw))) {
-    showFormError(form, `Indiquez le pourcentage de ${label}.`);
-    form.draftTonerLevel.focus();
+    showFormError(form, `Indiquez le pourcentage de ${type}.`);
+    form.draftNiveau.focus();
     return;
   }
   const value = Math.max(0, Math.min(100, Math.round(Number(raw))));
-  const swatch = TONER_SWATCHES[list.querySelectorAll(".toner-row").length % TONER_SWATCHES.length];
-  list.insertAdjacentHTML("beforeend", tonerRow(label, value, uid("ton"), swatch));
-  form.draftToner.value = "";
-  form.draftTonerLevel.value = "";
+  const swatch = TONER_SWATCHES[list.querySelectorAll(".cartouche-row").length % TONER_SWATCHES.length];
+  list.insertAdjacentHTML("beforeend", cartoucheRow({ marque, type, value, key: uid("ton"), swatch }, true));
+  form.draftMarque.value = "";
+  form.draftType.value = "";
+  form.draftNiveau.value = "";
   showFormError(form, "");
   list.lastElementChild?.scrollIntoView({ block: "nearest" });
-  form.draftToner.focus();
+  form.draftMarque.focus();
 }
 
 function addDraftKit() {
@@ -1471,7 +1505,7 @@ function onClick(event) {
   }
   if (action === "remove-toner") {
     event.preventDefault();
-    actionNode.closest(".toner-row")?.remove();
+    actionNode.closest(".cartouche-row")?.remove();
     return;
   }
   if (action === "reset") {
@@ -1512,6 +1546,11 @@ function onClick(event) {
   if (action === "add-kit") {
     event.preventDefault();
     addDraftKit();
+    return;
+  }
+  if (action === "lire-snmp") {
+    event.preventDefault();
+    lireSnmpForm();
     return;
   }
   if (action === "relever") {
@@ -1653,14 +1692,75 @@ function onInput(event) {
   }
 }
 
+function refreshLieuList(form) {
+  const list = form.querySelector("#lieu-list");
+  if (!list) return;
+  const names = lieuOptions(form.departement.value.trim());
+  list.innerHTML = names.map((nom) => `<option value="${esc(nom)}"></option>`).join("");
+}
+
+async function lireSnmpForm() {
+  const form = document.getElementById("printer-form");
+  if (!form || !canManage() || state.busy || !form.aAdresse?.checked) return;
+  const adresse = form.adresse.value.trim();
+  if (!isIpv4(adresse)) {
+    showFormError(form, "Indiquez une adresse IPv4 pour interroger l'imprimante.");
+    form.adresse.focus();
+    return;
+  }
+  state.busy = true;
+  toast("Lecture des niveaux…");
+  try {
+    const data = await api("/api/snmp", {
+      method: "POST",
+      body: { adresse, communaute: form.snmpCommunaute?.value?.trim() || "public" },
+    });
+    mergeSupplyRows(document.getElementById("cartouches"), data.cartouches || [], "type", (item) => cartoucheRow(item, true));
+    mergeSupplyRows(document.getElementById("kits"), data.kits || [], "label", (item) => kitRow(item.label, item.level, true));
+    showFormError(form, "");
+    toast(data.message || "Niveaux lus.");
+  } catch (err) {
+    if (!sessionLost(err)) toast(err.message);
+  } finally {
+    state.busy = false;
+  }
+}
+
+function mergeSupplyRows(list, items, field, render) {
+  if (!list) return;
+  for (const item of items) {
+    const name = String(item[field] || "").trim().toLowerCase();
+    const rows = [...list.children];
+    const found = rows.find((row) => {
+      const input = row.querySelector(field === "type" ? "[name=cartoucheType]" : "[name=kitLabel]");
+      return input && input.value.trim().toLowerCase() === name;
+    });
+    if (found) {
+      const level = found.querySelector(field === "type" ? "[name=cartoucheNiveau]" : "[name=kitLevel]");
+      if (level) level.value = field === "type" ? item.value : item.level;
+      continue;
+    }
+    list.insertAdjacentHTML("beforeend", render(item));
+  }
+}
+
 function onChange(event) {
   const field = event.target;
   if (field.name === "departement" && field.form?.id === "printer-form") {
-    const lieu = field.form.querySelector("[name=emplacement]");
-    const known = (state.places || []).find((item) => item.nom === field.value);
-    const lieux = known ? known.emplacements.map((item) => item.nom) : [];
-    lieu.innerHTML = lieux.map((nom) => `<option value="${esc(nom)}">${esc(nom)}</option>`).join("")
-      || `<option value="">Aucun emplacement</option>`;
+    refreshLieuList(field.form);
+    return;
+  }
+  if (field.name === "aAdresse" && field.form?.id === "printer-form") {
+    const on = field.checked;
+    const block = field.form.querySelector(".ip-fields");
+    const note = field.form.querySelector(".ip-local");
+    if (block) block.hidden = !on;
+    if (note) note.hidden = on;
+    if (on) field.form.adresse?.focus();
+    return;
+  }
+  if (field.name === "adresse" && field.form?.id === "printer-form" && field.form.aAdresse?.checked) {
+    lireSnmpForm();
     return;
   }
   if (field.dataset.filter && field.dataset.filter !== "q") {

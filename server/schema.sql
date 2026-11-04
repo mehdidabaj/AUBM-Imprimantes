@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS toners (
     imprimante_id VARCHAR(40) NOT NULL,
     cle VARCHAR(40) NOT NULL,
     libelle VARCHAR(80) NOT NULL,
+    marque VARCHAR(80) NOT NULL DEFAULT '',
+    genre VARCHAR(80) NOT NULL DEFAULT '',
     pourcentage TINYINT UNSIGNED NULL,
     swatch VARCHAR(20) NULL,
     extra TINYINT(1) NOT NULL DEFAULT 0,
