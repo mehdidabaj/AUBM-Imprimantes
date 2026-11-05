@@ -255,6 +255,18 @@ function csvCell(value) {
   return text;
 }
 
+export function formatDateCourt(date = new Date()) {
+  const value = date instanceof Date ? date : new Date(date);
+  const parts = new Intl.DateTimeFormat("fr-FR", {
+    timeZone: "Africa/Casablanca",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).formatToParts(value);
+  const part = (type) => parts.find((item) => item.type === type)?.value || "";
+  return `${part("day")}/${part("month")}/${part("year")}`;
+}
+
 export function formatDate(iso, withTime = false) {
   if (!iso) return "—";
   const date = new Date(iso.length === 10 ? `${iso}T12:00:00Z` : iso);

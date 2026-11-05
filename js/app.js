@@ -1,6 +1,6 @@
 import {
   esc, isLocal, isAntenne, tonerLevels, kitLevels, statut, statutLabel,
-  motifs, fabricant, filtrer, trier, parDepartement, resume, toCsv, formatDate,
+  motifs, fabricant, filtrer, trier, parDepartement, resume, toCsv, formatDate, formatDateCourt,
   readableSupplyName,
 } from "./logic.js";
 import { buildPdf } from "./pdf.js";
@@ -1363,9 +1363,8 @@ function exportPdf() {
   const filtered = onParc && Object.values(state.filters).some((value) => String(value || "").trim());
   const subtitle = picked ? "Sélection" : (filtered ? "Liste filtrée" : "Parc complet");
   const bytes = buildPdf(source, {
-    title: "AUBM — Parc imprimantes",
+    title: `État des consommables des imprimantes de l'AUBM en date ${formatDateCourt(new Date())}`,
     subtitle: `${subtitle} · ${source.length} machine${source.length > 1 ? "s" : ""}`,
-    generated: formatDate(new Date().toISOString(), true),
     tonerLevels,
     statut,
     statutLabel,

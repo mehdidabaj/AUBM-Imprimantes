@@ -131,9 +131,13 @@ function pageStream(rows, meta, pageIndex, pageCount) {
   };
   commands.push("0.96 0.95 0.93 rg\n");
   commands.push(`${MARGIN} ${PAGE_H - MARGIN - 28} ${PAGE_W - MARGIN * 2} 28 re f\n`);
-  text(2, 12, MARGIN + 8, PAGE_H - MARGIN - 18, meta.title || "AUBM — Parc imprimantes");
-  text(1, 8, MARGIN + 280, PAGE_H - MARGIN - 16, meta.subtitle || "");
-  text(1, 8, PAGE_W - MARGIN - 150, PAGE_H - MARGIN - 16, meta.generated || "");
+  commands.push("0.12 0.13 0.15 rg\n");
+  const title = meta.title || "État des consommables des imprimantes de l'AUBM";
+  text(2, 12, MARGIN + 8, PAGE_H - MARGIN - 18, title);
+  if (meta.subtitle) {
+    const subtitleWidth = textWidth(meta.subtitle, 8);
+    text(1, 8, PAGE_W - MARGIN - 8 - subtitleWidth, PAGE_H - MARGIN - 16, meta.subtitle);
+  }
 
   let y = PAGE_H - MARGIN - 48;
   let x = MARGIN;
