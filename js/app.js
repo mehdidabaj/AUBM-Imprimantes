@@ -237,7 +237,7 @@ function gateHtml() {
     return `<section class="card empty-block"><h2>Base indisponible</h2><p>${esc(state.error)}</p><button class="btn" type="button" data-action="retry">Réessayer</button></section>`;
   }
   return `<section class="login-wrap"><form id="login-form" class="card login-card">
-    <p class="eyebrow">AUBM</p>
+    <img class="login-logo" src="img/logo-aubm.png" alt="Agence Urbaine de Beni Mellal">
     <h2>Parc imprimantes</h2>
     <p class="hint">Entrez votre identifiant pour consulter le parc.</p>
     <label class="field">Identifiant

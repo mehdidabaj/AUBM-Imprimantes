@@ -347,8 +347,10 @@ body.is-login .view { padding: 0; }
   place-items: center;
   padding: 24px;
 }
-.login-card { width: min(420px, 100%); display: grid; gap: 12px; }
-.login-card h2 { font-size: 2rem; }
+.login-card { width: min(460px, 100%); display: grid; gap: 12px; padding: 22px 22px 18px; }
+.login-logo { width: 100%; height: auto; display: block; }
+.login-card h2 { font-size: 1.7rem; text-align: center; }
+.login-card .hint { text-align: center; }
 .login-card .btn { width: 100%; justify-content: center; }
 fieldset.plain {
   border: 0;

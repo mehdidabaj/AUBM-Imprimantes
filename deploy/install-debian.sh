@@ -119,6 +119,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 for required in \
   "$ROOT/index.html" \
   "$ROOT/css/styles.css" \
+  "$ROOT/img/logo-aubm.png" \
   "$ROOT/js/app.js" \
   "$ROOT/js/pdf.js" \
   "$ROOT/js/logic.js" \
@@ -334,9 +335,10 @@ fi
 
 python3 -m py_compile "$ROOT/server/app.py"
 
-install -d -o www-data -g www-data -m 755 "$WEB_ROOT" "$WEB_ROOT/css" "$WEB_ROOT/js"
+install -d -o www-data -g www-data -m 755 "$WEB_ROOT" "$WEB_ROOT/css" "$WEB_ROOT/js" "$WEB_ROOT/img"
 install -o www-data -g www-data -m 644 "$ROOT/index.html" "$WEB_ROOT/index.html"
 install -o www-data -g www-data -m 644 "$ROOT/css/styles.css" "$WEB_ROOT/css/styles.css"
+install -o www-data -g www-data -m 644 "$ROOT/img/logo-aubm.png" "$WEB_ROOT/img/logo-aubm.png"
 install -o www-data -g www-data -m 644 "$ROOT/js/app.js" "$ROOT/js/logic.js" "$ROOT/js/pdf.js" "$WEB_ROOT/js/"
 
 AVAILABLE="/etc/nginx/sites-available/${SITE_NAME}"
