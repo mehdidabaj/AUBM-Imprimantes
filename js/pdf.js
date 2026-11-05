@@ -1,5 +1,7 @@
 /** PDF A4 paysage, police standard, texte en WinAnsi (accents français). */
 
+import { EXPORT_HEADERS, exportCells } from "./logic.js";
+
 const PAGE_W = 842;
 const PAGE_H = 595;
 const MARGIN = 32;
@@ -75,50 +77,24 @@ function latin(bytes) {
   return Uint8Array.from(bytes);
 }
 
-export function tonerText(printer, tonerLevels) {
-  const levels = tonerLevels(printer);
-  if (!levels.length) return "—";
-  return levels.map((level) => `${level.label} ${level.value} %`).join(", ");
-}
-
-export function kitText(printer) {
-  const kits = printer.kits || [];
-  if (!kits.length) return "—";
-  return kits
-    .map((kit) => (kit.level === null || kit.level === undefined || kit.level === "" ? `${kit.label} OK` : `${kit.label} ${kit.level} %`))
-    .join(", ");
-}
-
-function rowCells(printer, helpers) {
-  return [
-    printer.nom || "",
-    [printer.departement, printer.emplacement].filter(Boolean).join(" · "),
-    printer.adresse || "",
-    tonerText(printer, helpers.tonerLevels),
-    kitText(printer),
-    printer.observation || "",
-    helpers.statutLabel(helpers.statut(printer)),
-  ];
-}
-
 const COLS = [
-  ["Machine", 118],
-  ["Service", 120],
-  ["Adresse", 88],
-  ["Toners", 190],
-  ["Kits", 110],
-  ["Observation", 108],
-  ["État", 44],
+  [EXPORT_HEADERS[0], 112],
+  [EXPORT_HEADERS[1], 148],
+  [EXPORT_HEADERS[2], 86],
+  [EXPORT_HEADERS[3], 176],
+  [EXPORT_HEADERS[4], 108],
+  [EXPORT_HEADERS[5], 100],
+  [EXPORT_HEADERS[6], 48],
 ];
 
 export function buildPdf(printers, meta = {}) {
   const size = 8;
   const leading = 10;
-  const header = layoutPages(printers, meta, size, leading);
+  const header = layoutPages(printers, size, leading);
   return renderPdf(header.pages, meta);
 }
 
-function layoutPages(printers, meta, size, leading) {
+function layoutPages(printers, size, leading) {
   const pages = [];
   let rows = [];
   let used = 0;
@@ -133,7 +109,8 @@ function layoutPages(printers, meta, size, leading) {
   };
 
   for (const printer of printers) {
-    const cells = COLS.map(([, width], index) => wrap(rowCells(printer, meta)[index], size, width - 8));
+    const values = exportCells(printer);
+    const cells = COLS.map(([, width], index) => wrap(values[index], size, width - 8));
     const height = Math.max(...cells.map((lines) => lines.length)) * leading + 8;
     if (rows.length && height > room()) pushPage();
     rows.push({ cells, height });

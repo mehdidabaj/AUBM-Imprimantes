@@ -211,42 +211,40 @@ export function resume(printers) {
   return counts;
 }
 
-export function toCsv(printers) {
-  const headers = [
-    "Nom", "Département", "Emplacement", "Adresse", "Couleur",
-    "Noir", "Cyan", "Magenta", "Jaune", "Autres toners", "Fourniture", "Kits",
-    "Observation", "État",
+export const EXPORT_HEADERS = [
+  "imprimante",
+  "Departement-Emplacement",
+  "Adresse",
+  "Toners",
+  "Kits",
+  "Observations",
+  "Etat",
+];
+
+export function exportCells(printer) {
+  const toners = tonerLevels(printer);
+  const kits = printer.kits || [];
+  return [
+    printer.nom || "",
+    [printer.departement, printer.emplacement].filter(Boolean).join(" - "),
+    printer.adresse || "",
+    toners.length ? toners.map((level) => `${level.label} ${level.value} %`).join(", ") : "—",
+    kits.length
+      ? kits.map((kit) => (
+        kit.level === null || kit.level === undefined || kit.level === ""
+          ? `${kit.label} OK`
+          : `${kit.label} ${kit.level} %`
+      )).join(", ")
+      : "—",
+    printer.observation || "",
+    statutLabel(statut(printer)),
   ];
-  const lines = [headers.join(";")];
+}
+
+export function toCsv(printers) {
+  const lines = [EXPORT_HEADERS.join(";")];
   for (const printer of printers) {
-    const extras = printer.cartouches?.length
-      ? printer.cartouches
-        .filter((item) => !["noir", "cyan", "magenta", "jaune"].includes(item.key))
-        .map((item) => `${[item.marque, item.type].filter(Boolean).join(" ")}:${item.value}%`)
-        .join(" | ")
-      : (printer.extra?.length
-        ? printer.extra.map((item) => `${item.label}:${item.value}%`).join(" | ")
-        : "");
-    const kits = (printer.kits || [])
-      .map((kit) => (kit.level === null || kit.level === undefined ? `${kit.label}:OK` : `${kit.label}:${kit.level}%`))
-      .join(" | ");
-    const cells = [
-      printer.nom,
-      printer.departement,
-      printer.emplacement,
-      printer.adresse,
-      printer.couleur ? "OUI" : "NON",
-      printer.noir ?? "",
-      printer.cyan ?? "",
-      printer.magenta ?? "",
-      printer.jaune ?? "",
-      extras,
-      printer.fourniture || "",
-      kits,
-      printer.observation || "",
-      statutLabel(statut(printer)),
-    ].map(csvCell);
-    lines.push(cells.join(";"));
+    lines.push(exportCells(printer).map(csvCell).join(";"));
   }
   return `\uFEFF${lines.join("\n")}`;
 }
