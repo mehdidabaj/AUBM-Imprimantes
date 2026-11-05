@@ -77,12 +77,12 @@ def decode_value(raw):
     text = raw.strip()
     text = re.sub(r"^(INTEGER|STRING|Gauge32|Counter32|Unsigned32|Opaque):\s*", "", text)
     if text.startswith("Hex-STRING:"):
-        return decode_hex(text.split(":", 1)[1])
+        return readable_supply_name(text.split(":", 1)[1]) or ""
     if re.fullmatch(r"-?\d+", text):
         return int(text)
     text = unescape_snmp(unquote(text))
     if looks_like_hex_dump(text):
-        return decode_hex(text)
+        return readable_supply_name(text)
     return tidy_name(text)
 
 
@@ -111,8 +111,20 @@ def unescape_snmp(text):
 
 
 def looks_like_hex_dump(text):
-    parts = text.split()
-    return len(parts) >= 2 and all(re.fullmatch(r"[0-9A-Fa-f]{2}", part) for part in parts)
+    parts = text.replace(":", " ").split()
+    return len(parts) >= 4 and all(re.fullmatch(r"[0-9A-Fa-f]{2}", part) for part in parts)
+
+
+def readable_supply_name(value):
+    """Nom lisible : une chaîne déjà claire, ou un dump hexadécimal SNMP."""
+    text = tidy_name("" if value is None else str(value))
+    if not looks_like_hex_dump(text):
+        return text
+    decoded = decode_hex(text)
+    letters = re.findall(r"[A-Za-zÀ-ÿ]", decoded)
+    if len(letters) < 2:
+        return text
+    return decoded
 
 
 def decode_hex(hex_part):
@@ -199,7 +211,7 @@ def named_supplies(supplies):
     for item in supplies:
         kind = item.get("type")
         percent = percentage(item.get("level"), item.get("maximum"))
-        label = tidy_name(item.get("description") or "") or "Consommable"
+        label = readable_supply_name(item.get("description") or "") or "Consommable"
         if percent is None:
             continue
         if kind in KIT_TYPES or (kind in (None, 1, 2) and looks_like_kit(label)):
@@ -225,7 +237,7 @@ def interpret(supplies, plotter=False):
     for item in supplies:
         kind = item.get("type")
         percent = percentage(item.get("level"), item.get("maximum"))
-        label = (item.get("description") or "Consommable").strip() or "Consommable"
+        label = readable_supply_name(item.get("description") or "") or "Consommable"
         if percent is None:
             continue
         if kind in KIT_TYPES or (kind in (None, 1, 2) and looks_like_kit(label)):

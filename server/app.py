@@ -21,6 +21,7 @@ from snmp_levels import (
     SnmpError,
     named_supplies,
     query_supplies,
+    readable_supply_name,
     valid_ipv4,
 )
 
@@ -234,8 +235,11 @@ def toners_from_cartouches(items):
     for index, item in enumerate(items):
         if not isinstance(item, dict):
             raise ApiError("Cartouche invalide.", 400)
-        genre = clean_text(item.get("nom") or item.get("type") or item.get("label"), 160, True, "Le nom de la cartouche")
-        marque = clean_text(item.get("marque"), 80)
+        genre = clean_text(
+            readable_supply_name(item.get("nom") or item.get("type") or item.get("label")),
+            160, True, "Le nom de la cartouche",
+        )
+        marque = clean_text(readable_supply_name(item.get("marque")), 80)
         value = percent(item.get("value"), required=True)
         requested = clean_text(item.get("key"), 40)
         swatch = swatch_for(genre, clean_text(item.get("swatch"), 20))
@@ -322,7 +326,7 @@ def normalize(raw, forced_id=None):
     for index, kit in enumerate(kits_raw):
         if not isinstance(kit, dict):
             raise ApiError("Kit invalide.", 400)
-        label = clean_text(kit.get("label"), 160, True, "Le kit")
+        label = clean_text(readable_supply_name(kit.get("label")), 160, True, "Le kit")
         kits.append({
             "libelle": label,
             "pourcentage": percent(kit.get("level")),

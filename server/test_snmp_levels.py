@@ -80,6 +80,35 @@ class SnmpLevelsTest(unittest.TestCase):
         self.assertEqual([item["value"] for item in reading["cartouches"]], [40, 25])
         self.assertEqual(reading["kits"], [{"label": "Kit de fusion", "level": 10}])
 
+    def test_quick_print_kit_hex_from_the_form(self):
+        cartridge = (
+            "43 61 72 74 6F 75 63 68 65 20 64 65 20 6E 6F 69 72 "
+            "20 39 30 41 20 48 50 20 43 45 33 39 30 41 00"
+        )
+        kit_text = "Kit de maintenance HP 110V-CF064A, 220V-CF065A"
+        kit = " ".join(f"{byte:02X}" for byte in kit_text.encode("utf-8") + b"\x00")
+        walk = f"""
+.1.3.6.1.2.1.43.11.1.1.5.1.1 3
+.1.3.6.1.2.1.43.11.1.1.6.1.1 {cartridge}
+.1.3.6.1.2.1.43.11.1.1.8.1.1 100
+.1.3.6.1.2.1.43.11.1.1.9.1.1 73
+.1.3.6.1.2.1.43.11.1.1.5.1.2 4
+.1.3.6.1.2.1.43.11.1.1.6.1.2 {kit}
+.1.3.6.1.2.1.43.11.1.1.8.1.2 100
+.1.3.6.1.2.1.43.11.1.1.9.1.2 71
+"""
+        reading = named_supplies(parse_walk(walk))
+        self.assertEqual(reading["cartouches"][0]["nom"], "Cartouche de noir 90A HP CE390A")
+        self.assertEqual(reading["cartouches"][0]["value"], 73)
+        self.assertEqual(reading["kits"][0]["label"], kit_text)
+        self.assertEqual(reading["kits"][0]["level"], 71)
+
+    def test_plain_name_is_not_rewritten(self):
+        from snmp_levels import readable_supply_name
+        self.assertEqual(readable_supply_name("HP"), "HP")
+        self.assertEqual(readable_supply_name("Gris"), "Gris")
+        self.assertEqual(readable_supply_name("TEST"), "TEST")
+
     def test_quick_print_hex_dump_is_the_exact_name(self):
         raw = (
             "43 61 72 74 6F 75 63 68 65 20 64 65 20 74 6F 6E 65 72 "

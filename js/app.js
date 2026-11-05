@@ -1,6 +1,7 @@
 import {
   esc, isLocal, isAntenne, tonerLevels, kitLevels, statut, statutLabel,
   motifs, fabricant, filtrer, trier, parDepartement, resume, toCsv, formatDate,
+  readableSupplyName,
 } from "./logic.js";
 import { buildPdf } from "./pdf.js";
 
@@ -86,10 +87,18 @@ function replacePrinter(printer) {
 }
 
 function uid(prefix) {
-  const bytes = new Uint8Array(4);
-  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes);
-  else for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
-  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  let hex = "";
+  try {
+    const bytes = new Uint8Array(4);
+    if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes);
+    else throw new Error("crypto");
+    hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  } catch {
+    hex = "";
+  }
+  if (!hex) {
+    for (let index = 0; index < 8; index += 1) hex += Math.floor(Math.random() * 16).toString(16);
+  }
   return `${prefix}-${hex}`;
 }
 
@@ -769,9 +778,15 @@ function cartouchesOf(printer) {
 
 function cartoucheRow(item, editable = true) {
   const hasLevel = item.value !== null && item.value !== undefined && item.value !== "";
+  let marque = readableSupplyName(item.marque || "");
+  let type = readableSupplyName(item.nom || item.type || "");
+  if (!type && marque) {
+    type = marque;
+    marque = "";
+  }
   return `<div class="supply-grid cartouche-row" data-key="${esc(item.key || "")}" data-swatch="${esc(item.swatch || "")}">
-    <input name="cartoucheMarque" value="${esc(item.marque || "")}" placeholder="Marque" aria-label="Marque de la cartouche">
-    <input name="cartoucheType" value="${esc(item.nom || item.type || "")}" placeholder="Nom de la cartouche" aria-label="Nom de la cartouche">
+    <input name="cartoucheMarque" value="${esc(marque)}" placeholder="Marque" aria-label="Marque de la cartouche">
+    <input name="cartoucheType" value="${esc(type)}" placeholder="Nom de la cartouche" aria-label="Nom de la cartouche">
     <input name="cartoucheNiveau" type="number" min="0" max="100" value="${hasLevel ? Number(item.value) : ""}" placeholder="%" aria-label="Pourcentage de la cartouche">
     ${editable ? `<button class="btn ghost" type="button" data-action="remove-toner">Retirer</button>` : ""}
   </div>`;
@@ -829,7 +844,7 @@ function tonerRow(label, level, key = "", swatch = "", editable = true) {
 function kitRow(label, level, editable = true) {
   const hasLevel = level !== null && level !== undefined && level !== "";
   return `<div class="kit-row">
-    <input name="kitLabel" value="${esc(label)}" placeholder="Kit de fusion, tambour…" aria-label="Nom du kit">
+    <input name="kitLabel" value="${esc(readableSupplyName(label))}" placeholder="Kit de fusion, tambour…" aria-label="Nom du kit">
     <input name="kitLevel" type="number" min="0" max="100" value="${hasLevel ? Number(level) : ""}" placeholder="OK" aria-label="Niveau du kit en pourcentage">
     ${editable ? `<button class="btn ghost" type="button" data-action="remove-kit">Retirer</button>` : ""}
   </div>`;
@@ -949,6 +964,7 @@ function showFormError(form, message) {
   if (!node) return;
   node.hidden = !message;
   node.textContent = message || "";
+  if (message) node.scrollIntoView({ block: "nearest" });
 }
 
 function sessionLost(err) {
@@ -1118,7 +1134,11 @@ async function saveUser(form) {
 }
 
 async function savePrinter(form) {
-  if (state.busy || !canManage()) return;
+  if (!canManage()) return;
+  if (state.busy) {
+    showFormError(form, "Patientez, une lecture est encore en cours.");
+    return;
+  }
   const error = document.getElementById("form-error");
   const id = form.dataset.id;
   const previous = id ? printerById(id) : null;
@@ -1746,11 +1766,11 @@ async function lireSnmpForm() {
 function mergeSupplyRows(list, items, field, render) {
   if (!list) return;
   for (const item of items) {
-    const name = String(item[field] || "").trim().toLowerCase();
+    const name = readableSupplyName(item[field] || "").trim().toLowerCase();
     const rows = [...list.children];
     const found = rows.find((row) => {
       const input = row.querySelector(field === "type" ? "[name=cartoucheType]" : "[name=kitLabel]");
-      return input && input.value.trim().toLowerCase() === name;
+      return input && readableSupplyName(input.value).trim().toLowerCase() === name && name;
     });
     if (found) {
       const level = found.querySelector(field === "type" ? "[name=cartoucheNiveau]" : "[name=kitLevel]");

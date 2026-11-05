@@ -4,6 +4,33 @@ export function esc(value) {
   ));
 }
 
+export function readableSupplyName(value) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  const parts = text.replace(/:/g, " ").split(/\s+/).filter(Boolean);
+  if (parts.length < 4 || !parts.every((part) => /^[0-9A-Fa-f]{2}$/.test(part))) return text;
+  const bytes = parts.map((part) => Number.parseInt(part, 16));
+  while (bytes.length && bytes[bytes.length - 1] === 0) bytes.pop();
+  if (bytes.length < 2) return text;
+  const raw = Uint8Array.from(bytes);
+  let decoded = "";
+  const utf16 = raw.length >= 4 && raw.length % 2 === 0 && (raw[0] === 0 || raw[1] === 0);
+  if (utf16) {
+    const encoding = raw[0] === 0 ? "utf-16be" : "utf-16le";
+    decoded = new TextDecoder(encoding).decode(raw);
+  } else {
+    try {
+      decoded = new TextDecoder("utf-8", { fatal: true }).decode(raw);
+    } catch {
+      decoded = new TextDecoder("iso-8859-1").decode(raw);
+    }
+  }
+  decoded = decoded.replace(/\u0000/g, " ").replace(/\s+/g, " ").trim();
+  const letters = decoded.match(/[A-Za-zÀ-ÿ]/g);
+  if (!decoded || !letters || letters.length < 2) return text;
+  return decoded;
+}
+
 export function isLocal(printer) {
   return !printer.adresse || /^(localhost|local)$/i.test(String(printer.adresse).trim());
 }
@@ -25,7 +52,7 @@ export function tonerLevels(printer) {
       .filter((item) => item.value !== null && item.value !== undefined && item.value !== "")
       .map((item) => ({
         key: item.key || item.type,
-        label: String(item.nom || item.type || item.label || "Cartouche").trim(),
+        label: readableSupplyName(item.nom || item.type || item.label || "Cartouche"),
         value: Number(item.value),
         swatch: item.swatch || "#2b3038",
       }));
@@ -36,7 +63,7 @@ export function tonerLevels(printer) {
   const extra = Array.isArray(printer.extra)
     ? printer.extra.map((item) => ({
       key: item.key,
-      label: item.type || item.label,
+      label: readableSupplyName(item.type || item.label),
       value: Number(item.value),
       swatch: item.swatch || "#2b3038",
     }))
