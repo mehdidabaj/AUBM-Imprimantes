@@ -7,13 +7,12 @@ WEB_ROOT="/var/www/aubm-imprimantes"
 SITE_NAME="aubm-imprimantes"
 ENV_FILE="/etc/aubm-imprimantes.env"
 LISTEN_PORT="80"
-RESET_DATA=0
 VIDER=0
 NEW_ADMIN=0
 
 usage() {
   cat <<'EOF'
-Usage : sudo ./deploy/install-debian.sh [--server-name NOM] [--listen-port PORT] [--web-root CHEMIN] [--reset-data] [--vider]
+Usage : sudo ./deploy/install-debian.sh [--server-name NOM] [--listen-port PORT] [--web-root CHEMIN] [--vider]
 
 Installe Nginx, le serveur MySQL des dépôts Debian, charge le schéma,
 démarre l'API et publie le site. La base MySQL déjà présente (GLPI, par
@@ -22,7 +21,6 @@ exemple) est conservée : seule la base aubm_imprimantes est ajoutée.
   --server-name NOM    Nom d'hôte Nginx (défaut : _, tout le port choisi)
   --listen-port PORT   Port du site (défaut : 80). Mettre 8080 si le port 80 sert déjà GLPI.
   --web-root CHEMIN    Dossier des fichiers (défaut : /var/www/aubm-imprimantes)
-  --reset-data         Recharge le relevé du 4 juin 2025 et vide le journal
   --vider              Efface imprimantes, toners, kits, journal, départements et emplacements. Les comptes restent.
 
 Exemple, serveur dont le port 80 est déjà pris par GLPI :
@@ -52,10 +50,6 @@ while [[ $# -gt 0 ]]; do
       LISTEN_PORT="${2:-}"
       shift 2
       ;;
-    --reset-data)
-      RESET_DATA=1
-      shift
-      ;;
     --vider)
       VIDER=1
       shift
@@ -71,11 +65,6 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-
-if [[ "$RESET_DATA" -eq 1 && "$VIDER" -eq 1 ]]; then
-  echo "Choisissez une seule action : --reset-data ou --vider." >&2
-  exit 1
-fi
 
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "Lancez le script avec sudo." >&2
@@ -135,7 +124,6 @@ for required in \
   "$ROOT/js/logic.js" \
   "$ROOT/server/app.py" \
   "$ROOT/server/schema.sql" \
-  "$ROOT/server/seed.json" \
   "$ROOT/deploy/aubm-imprimantes.nginx" \
   "$ROOT/deploy/aubm-imprimantes.service"
 do
@@ -322,10 +310,26 @@ if [[ "$VIDER" -eq 1 ]]; then
 DELETE FROM journal;
 DELETE FROM imprimantes;
 DELETE FROM departements;
-INSERT INTO etat (cle, valeur) VALUES ('importe', '1')
-  ON DUPLICATE KEY UPDATE valeur = '1';
 SQL
   echo "Parc, journal, départements et emplacements effacés. Les comptes sont conservés."
+fi
+
+# Retire les 36 machines du relevé du 4 juin 2025 (identifiants imp-01 à imp-36).
+# Les fiches créées dans l'application ont un identifiant plus long et restent en place.
+SNAPSHOT="$(mysql --protocol=socket -uroot -N -e "SELECT COUNT(*) FROM imprimantes WHERE id REGEXP '^imp-[0-9]{2}$'" "$AUBM_DB_NAME")"
+if [[ "${SNAPSHOT:-0}" -gt 0 ]]; then
+  mysql --protocol=socket -uroot --default-character-set=utf8mb4 "$AUBM_DB_NAME" <<'SQL'
+DELETE FROM journal WHERE imprimante_id REGEXP '^imp-[0-9]{2}$';
+DELETE FROM imprimantes WHERE id REGEXP '^imp-[0-9]{2}$';
+DELETE emplacements FROM emplacements
+  JOIN departements ON departements.id = emplacements.departement_id
+  LEFT JOIN imprimantes ON imprimantes.departement = departements.nom
+ WHERE imprimantes.id IS NULL;
+DELETE departements FROM departements
+  LEFT JOIN imprimantes ON imprimantes.departement = departements.nom
+ WHERE imprimantes.id IS NULL;
+SQL
+  echo "Relevé du 4 juin 2025 retiré : ${SNAPSHOT} imprimante(s)."
 fi
 
 python3 -m py_compile "$ROOT/server/app.py"
@@ -421,42 +425,10 @@ if [[ "$ready" -ne 1 ]]; then
   exit 1
 fi
 
-api_login() {
-  local jar="$1"
-  local body
-  body="$(mktemp)"
-  python3 - "$body" <<'PY'
-import json, os, sys
-with open(sys.argv[1], "w", encoding="utf-8") as handle:
-    json.dump({
-        "identifiant": os.environ.get("AUBM_ADMIN_USER", "admin"),
-        "motDePasse": os.environ["AUBM_ADMIN_PASSWORD"],
-    }, handle)
-PY
-  curl -fsS -c "$jar" -H "Content-Type: application/json" --data-binary @"$body" \
-    "http://127.0.0.1:${AUBM_PORT}/api/login" >/dev/null || {
-    rm -f "$body"
-    return 1
-  }
-  rm -f "$body"
-}
-
 USERS="$(mysql --protocol=socket -uroot -N -e "SELECT COUNT(*) FROM utilisateurs" "$AUBM_DB_NAME")"
 if [[ "${USERS:-0}" -lt 1 ]]; then
   echo "Aucun compte utilisateur n'a été créé." >&2
   exit 1
-fi
-
-if [[ "$RESET_DATA" -eq 1 ]]; then
-  COOKIE="$(mktemp)"
-  if ! api_login "$COOKIE"; then
-    rm -f "$COOKIE"
-    echo "Connexion administrateur refusée. Alignez AUBM_ADMIN_PASSWORD dans ${ENV_FILE} sur le mot de passe actuel du compte, puis relancez avec --reset-data." >&2
-    exit 1
-  fi
-  curl -fsS -b "$COOKIE" -X POST "http://127.0.0.1:${AUBM_PORT}/api/reset" >/dev/null
-  rm -f "$COOKIE"
-  echo "Relevé du 4 juin 2025 rechargé. Le journal a été vidé."
 fi
 
 if ! curl -fsS "http://127.0.0.1:${LISTEN_PORT}/api/health" >/dev/null; then
@@ -503,8 +475,6 @@ Deux profils : administrateur (gestion complète et comptes) et consultation (le
 Une réinstallation conserve la base et les comptes.
 Pour vider le parc, le journal et les départements sans toucher aux comptes :
   sudo ${ROOT}/deploy/install-debian.sh --listen-port ${LISTEN_PORT} --vider
-Pour revenir au relevé du 4 juin 2025 :
-  sudo ${ROOT}/deploy/install-debian.sh --listen-port ${LISTEN_PORT} --reset-data
 EOF
 
 if [[ "$NEW_ADMIN" -eq 1 ]]; then
@@ -514,6 +484,6 @@ Compte administrateur créé.
   Identifiant : ${AUBM_ADMIN_USER}
   Mot de passe : ${AUBM_ADMIN_PASSWORD}
 Ce mot de passe est aussi dans ${ENV_FILE}. Il n'est affiché qu'à la création.
-Changez-le ensuite dans la page Utilisateurs. Après un changement, mettez ${ENV_FILE} à jour avant un --reset-data.
+Changez-le ensuite dans la page Utilisateurs.
 EOF
 fi

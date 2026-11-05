@@ -148,7 +148,6 @@ export function filtrer(printers, filters) {
         printer.adresse,
         printer.observation,
         printer.fourniture,
-        printer.releve,
         fabricant(printer),
       ].join(" ").toLowerCase();
       if (!blob.includes(query)) return false;
@@ -216,7 +215,7 @@ export function toCsv(printers) {
   const headers = [
     "Nom", "Département", "Emplacement", "Adresse", "Couleur",
     "Noir", "Cyan", "Magenta", "Jaune", "Autres toners", "Fourniture", "Kits",
-    "Observation", "État", "Relevé du 04/06/2025",
+    "Observation", "État",
   ];
   const lines = [headers.join(";")];
   for (const printer of printers) {
@@ -246,7 +245,6 @@ export function toCsv(printers) {
       kits,
       printer.observation || "",
       statutLabel(statut(printer)),
-      printer.releve || "",
     ].map(csvCell);
     lines.push(cells.join(";"));
   }

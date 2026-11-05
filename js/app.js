@@ -5,8 +5,6 @@ import {
 } from "./logic.js";
 import { buildPdf } from "./pdf.js";
 
-const RELEVE_DATE = "2025-06-04";
-
 const INTERVENTION_TYPES = [
   ["toner-noir", "Remplacement toner noir"],
   ["toner-cyan", "Remplacement toner cyan"],
@@ -178,8 +176,7 @@ function sidebarHtml() {
         </a>`).join("")}
     </nav>
     <div class="side-foot">
-      <p>${state.printers.length ? `Relevé importé du <strong>${esc(formatDate(RELEVE_DATE))}</strong>` : "Parc vide"}</p>
-      <p>${state.printers.length} machine${state.printers.length > 1 ? "s" : ""} suivie${state.printers.length > 1 ? "s" : ""}</p>
+      <p>${state.printers.length ? `${state.printers.length} machine${state.printers.length > 1 ? "s" : ""} suivie${state.printers.length > 1 ? "s" : ""}` : "Parc vide"}</p>
       <p>${esc(state.user.nom)} · ${esc(roleLabel(state.user.role))}</p>
     </div>`;
 }
@@ -262,11 +259,11 @@ function dashboardHtml() {
   const banner = counts.total
     ? `<section class="banner">
       <div>
-        <p class="eyebrow">Snapshot du relevé</p>
-        <h2>Les niveaux datent du ${esc(formatDate(RELEVE_DATE))}.</h2>
+        <p class="eyebrow">Parc</p>
+        <h2>${counts.total} imprimante${counts.total > 1 ? "s" : ""} suivie${counts.total > 1 ? "s" : ""}.</h2>
         <p>${canManage()
-          ? "Le relevé est dans MySQL. Ajoutez une imprimante, ses toners et leurs pourcentages, les kits s'il y en a, puis l'observation : la fiche est enregistrée sur le serveur."
-          : "Le relevé est dans MySQL. Les fiches, les filtres et les exports restent disponibles. Les modifications du parc sont réservées aux administrateurs."}</p>
+          ? "Ajoutez une imprimante, ses cartouches et leurs pourcentages, les kits s'il y en a, puis l'observation."
+          : "Les fiches, les filtres et les exports restent disponibles. Les modifications du parc sont réservées aux administrateurs."}</p>
       </div>
       <a class="btn btn-primary" href="#/alertes">Voir les ${counts.critique} alertes</a>
     </section>`
@@ -606,13 +603,11 @@ function journalHtml() {
     return `<section class="card empty-block">
       <h2>Pas encore d'intervention</h2>
       <p>Quand vous mettez à jour une fiche ou enregistrez un remplacement, la trace apparaît ici.</p>
-      ${canManage() ? `<button class="btn" type="button" data-action="reset">Restaurer le relevé d'origine</button>` : ""}
     </section>`;
   }
   return `<section class="card">
     <header class="card-head">
       <h2>${state.journal.length} entrée${state.journal.length > 1 ? "s" : ""}</h2>
-      ${canManage() ? `<button class="btn ghost" type="button" data-action="reset">Restaurer le relevé</button>` : ""}
     </header>
     <ol class="journal">
       ${state.journal.map((entry) => {
@@ -652,7 +647,6 @@ function ficheHtml(id) {
       </div>
       ${creating ? "" : `<span class="pill ${code}">${esc(statutLabel(code))}</span>`}
     </header>
-    ${printer.ecart ? `<p class="callout">Sur le relevé du 4 juin 2025, le texte des toners et les colonnes de pourcentages ne disent pas la même chose. Les niveaux ci-dessous sont ceux des colonnes. Le texte d'origine reste visible plus bas.</p>` : ""}
     ${manage ? "" : `<p class="callout">Consultation seule. Les modifications du parc sont réservées aux administrateurs.</p>`}
     <form id="printer-form" data-id="${esc(printer.id || "")}">
       <fieldset class="plain" ${manage ? "" : "disabled"}>
@@ -722,7 +716,6 @@ function ficheHtml(id) {
         <div id="kits" class="kits">
           ${(printer.kits || []).map((kit) => kitRow(kit.label, kit.level, manage)).join("")}
         </div>
-        ${printer.releve ? `<p class="releve"><span>Texte du relevé du ${esc(formatDate(RELEVE_DATE))}</span> ${esc(printer.releve)}</p>` : ""}
         <p class="form-error" id="form-error" hidden></p>
         <div class="form-actions">
           ${manage ? `<button class="btn btn-primary" type="submit">Enregistrer</button>` : ""}
@@ -945,12 +938,12 @@ function readPrinter(form, previous) {
     observation: String(data.get("observation") || "").trim() || "RAS",
     cartouches: cartouches.rows,
     kits,
-    releve: previous?.releve || "",
-    ecart: previous?.ecart || false,
+    releve: "",
+    ecart: false,
   };
   const changed = JSON.stringify(tonerSnapshot(previous || {})) !== JSON.stringify(tonerSnapshot(next));
   if (!previous || changed) next.niveauxLe = new Date().toISOString();
-  else next.niveauxLe = previous.niveauxLe || RELEVE_DATE;
+  else next.niveauxLe = previous.niveauxLe || new Date().toISOString();
   return { printer: next, changed };
 }
 
@@ -1360,22 +1353,6 @@ function exportPdf() {
   toast(`PDF de ${source.length} machine${source.length > 1 ? "s" : ""} téléchargé.`);
 }
 
-async function resetData() {
-  if (state.busy) return;
-  state.busy = true;
-  try {
-    const data = await api("/api/reset", { method: "POST" });
-    state.printers = data.printers;
-    state.journal = data.entries || [];
-    toast("Relevé du 4 juin 2025 restauré.");
-    paint();
-  } catch (err) {
-    if (!sessionLost(err)) toast(err.message);
-  } finally {
-    state.busy = false;
-  }
-}
-
 function bindComposers() {
   for (const button of document.querySelectorAll("[data-action=add-toner], [data-action=add-kit]")) {
     button.addEventListener("click", (event) => {
@@ -1583,16 +1560,6 @@ function onClick(event) {
   if (action === "remove-toner") {
     event.preventDefault();
     actionNode.closest(".cartouche-row")?.remove();
-    return;
-  }
-  if (action === "reset") {
-    if (!canManage()) return;
-    if (actionNode.dataset.confirm !== "1") {
-      actionNode.dataset.confirm = "1";
-      actionNode.textContent = "Confirmer la restauration";
-      return;
-    }
-    resetData();
     return;
   }
   if (action === "clear-filters") {

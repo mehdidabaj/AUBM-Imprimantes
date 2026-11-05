@@ -307,8 +307,6 @@ tr.attention td:first-child { box-shadow: inset 3px 0 0 var(--yellow); }
 .check-cell { width: 42px; }
 .pick-card { display: grid; grid-template-columns: auto 1fr; gap: 8px; align-items: start; }
 .pick-card label { padding-top: 14px; }
-.releve { margin-top: 12px; background: #f7f3ea; border-radius: 12px; padding: 10px 12px; color: var(--soft); }
-.releve span { display: block; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 4px; }
 .form-error { color: var(--crit); font-weight: 650; }
 .callout { background: var(--warn-bg); color: #6d4708; border-radius: 14px; padding: 12px 14px; }
 .form-actions { margin-top: 14px; }

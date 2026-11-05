@@ -1,6 +1,6 @@
 # AUBM — Parc imprimantes
 
-Application web pour suivre le parc d'imprimantes à partir du relevé du **4 juin 2025** : identité, adresse, niveaux de toner, kits et observations. Les fiches sont enregistrées dans MySQL et partagées par tous les postes.
+Application web pour suivre le parc d'imprimantes : identité, adresse, niveaux de toner, kits et observations. Les fiches sont enregistrées dans MySQL et partagées par tous les postes.
 
 ## Déployer sur Debian
 
@@ -16,7 +16,7 @@ sudo ./deploy/install-debian.sh
 
 Une fois cette branche fusionnée dans `main`, le clone peut se faire sans `-b`.
 
-Le script installe Nginx, le serveur MySQL des dépôts Debian (paquet `default-mysql-server`), charge le schéma, importe le relevé si la base est vide, et démarre l'API (`aubm-imprimantes`, port local 8765). Nginx publie le site et relaie `/api/`.
+Le script installe Nginx, le serveur MySQL des dépôts Debian (paquet `default-mysql-server`), charge le schéma et démarre l'API (`aubm-imprimantes`, port local 8765). Nginx publie le site et relaie `/api/`. Le parc démarre vide.
 
 Avec le nom d'hôte par défaut, le port 80 du serveur affiche le parc. Pour un nom précis :
 
@@ -48,7 +48,7 @@ sudo git pull
 sudo ./deploy/install-debian.sh --server-name 195.200.200.16 --listen-port 8080
 ```
 
-Contrôle : `curl -s http://127.0.0.1:8080/api/health` doit répondre `"ok": true`. Pour effacer le parc, le journal, les départements et les emplacements, tout en gardant les comptes :
+Contrôle : `curl -s http://127.0.0.1:8080/api/health` doit répondre `"ok": true`. Gardez `--listen-port 8080` à chaque relance, afin de laisser le port 80 à GLPI. Pour effacer le parc, le journal, les départements et les emplacements, tout en gardant les comptes :
 
 ```bash
 cd /opt/aubm-imprimantes
@@ -56,15 +56,13 @@ sudo git pull
 sudo ./deploy/install-debian.sh --server-name 195.200.200.16 --listen-port 8080 --vider
 ```
 
-Le relevé du 4 juin 2025 ne revient pas au redémarrage. Pour le recharger : `sudo ./deploy/install-debian.sh --server-name 195.200.200.16 --listen-port 8080 --reset-data`. Gardez `--listen-port 8080` à chaque relance, afin de laisser le port 80 à GLPI.
-
 Le mot de passe du compte MySQL `aubm` est créé dans `/etc/aubm-imprimantes.env` (lecture root et www-data). Une réinstallation le réutilise et conserve les fiches déjà saisies.
 
 ## Comptes et accès
 
 Deux profils :
 
-- **Administrateur** : parc, interventions, restauration du relevé, départements et page Utilisateurs.
+- **Administrateur** : parc, interventions, départements et page Utilisateurs.
 - **Consultation** : tableau, inventaire, alertes, fiches et journal en lecture, plus les exports CSV et PDF. L'ajout, la modification et la suppression du parc restent fermés.
 
 À la première installation, le script crée le compte `admin` (ou la valeur de `AUBM_ADMIN_USER`) et affiche son mot de passe une seule fois. Il est aussi écrit dans `/etc/aubm-imprimantes.env` (`AUBM_ADMIN_PASSWORD`). Une réinstallation ne le réaffiche pas, car le mot de passe peut avoir été changé dans l'application. La page Utilisateurs permet d'ajouter un compte, de changer son profil, de le désactiver ou de poser un nouveau mot de passe. Le dernier administrateur actif reste en place.
@@ -86,14 +84,6 @@ cd /opt/aubm-imprimantes
 sudo git pull
 sudo ./deploy/install-debian.sh --server-name 195.200.200.16 --listen-port 8080
 ```
-
-Pour revenir au relevé du 4 juin 2025 et vider le journal :
-
-```bash
-sudo ./deploy/install-debian.sh --reset-data
-```
-
-Le même bouton existe dans le journal de l'application.
 
 Si le pare-feu `ufw` est déjà actif, le script ouvre le profil « Nginx HTTP ». L'API n'écoute que sur `127.0.0.1`.
 
@@ -130,6 +120,4 @@ L'administrateur peut en plus :
 - Enregistrer une intervention (remplacement de toner, de kit, de photoconducteur).
 - Créer les comptes et choisir leur profil.
 - Gérer les départements et les emplacements qui leur sont liés. La fiche propose ensuite ces emplacements selon le département choisi.
-- Lire les niveaux des cartouches et des kits sur une imprimante joignable par adresse IPv4. Le bouton « Lire les niveaux » interroge la machine en SNMP (communauté `public` par défaut, modifiable sur la fiche). « Lire les IP » parcourt les machines qui ont une adresse. Une adresse `Localhost` n'est pas interrogée.
-
-Pour le bureau Régisseur, le texte du relevé et les colonnes de pourcentages du tableau ne coïncident pas : la fiche le signale et retient les pourcentages des colonnes.
+- Lire les niveaux des cartouches et des kits sur une imprimante joignable par adresse IPv4. Le bouton « Lire les cartouches et les kits » interroge la machine en SNMP (communauté `public` par défaut, modifiable sur la fiche). « Lire les IP » parcourt les machines qui ont une adresse. Une adresse `Localhost` n'est pas interrogée.

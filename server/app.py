@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """API MySQL du parc d'imprimantes AUBM."""
 
-import json
 import logging
 import os
 import re
@@ -26,7 +25,6 @@ from snmp_levels import (
 )
 
 ROOT = Path(__file__).resolve().parent
-SEED_PATH = ROOT / "seed.json"
 
 STANDARD = (
     ("noir", "Noir", "#2b3038"),
@@ -583,21 +581,6 @@ def journal_entry(row):
     }
 
 
-def load_seed():
-    try:
-        data = json.loads(SEED_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ApiError("Le relevé initial est illisible.", 500) from exc
-    if not isinstance(data, list) or not data:
-        raise ApiError("Le relevé initial est vide.", 500)
-    return data
-
-
-def insert_seed(cur):
-    for raw in load_seed():
-        insert_printer(cur, normalize(raw))
-
-
 def sync_places(conn):
     with conn.cursor() as cur:
         cur.execute("SELECT DISTINCT departement, emplacement FROM imprimantes")
@@ -630,31 +613,6 @@ def load_places(cur):
             "emplacements": [{"id": row["id"], "nom": row["nom"]} for row in cur.fetchall()],
         })
     return departements
-
-
-def mark_imported(cur):
-    cur.execute(
-        """
-        INSERT INTO etat (cle, valeur) VALUES ('importe', '1')
-        ON DUPLICATE KEY UPDATE valeur = '1'
-        """
-    )
-
-
-def already_imported(cur):
-    cur.execute("SELECT valeur FROM etat WHERE cle = 'importe'")
-    row = cur.fetchone()
-    return bool(row and row["valeur"] == "1")
-
-
-def seed_if_empty(conn):
-    with conn.cursor() as cur:
-        if already_imported(cur):
-            return
-        cur.execute("SELECT COUNT(*) AS n FROM imprimantes")
-        if not cur.fetchone()["n"]:
-            insert_seed(cur)
-        mark_imported(cur)
 
 
 def public_user(row):
@@ -1275,19 +1233,6 @@ def relever_printer(printer_id):
     return jsonify(run(write))
 
 
-@app.post("/api/reset")
-@guarded(admin=True)
-def reset():
-    def write(conn):
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM journal")
-            cur.execute("DELETE FROM imprimantes")
-            insert_seed(cur)
-            return {"printers": load_printers(cur), "entries": []}
-
-    return jsonify(run(write))
-
-
 @app.errorhandler(ApiError)
 def handle_api(err):
     return jsonify(error=str(err)), err.status
@@ -1311,7 +1256,6 @@ def main():
     configure_session()
     try:
         with connection() as conn:
-            seed_if_empty(conn)
             sync_places(conn)
             ensure_admin(conn)
     except ApiError as exc:
