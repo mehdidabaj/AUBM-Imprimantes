@@ -664,13 +664,24 @@ function ficheHtml(id) {
             <input name="nom" required value="${esc(printer.nom)}" placeholder="HP Color LaserJet M552">
           </label>
           <label class="field">Département
-            <input name="departement" required maxlength="80" list="dept-list" value="${esc(printer.departement)}" placeholder="DAF, DIR, Antenne…">
+            <select name="departement" required>
+              ${departmentOptions(printer.departement)}
+            </select>
           </label>
           <label class="field">Emplacement
-            <input name="emplacement" required maxlength="160" list="lieu-list" value="${esc(printer.emplacement)}" placeholder="Bureau, couloir…">
+            <select name="emplacement" required>
+              ${emplacementOptions(printer.departement, printer.emplacement)}
+            </select>
           </label>
-          <datalist id="dept-list">${departments().map((nom) => `<option value="${esc(nom)}"></option>`).join("")}</datalist>
-          <datalist id="lieu-list">${lieuOptions(printer.departement).map((nom) => `<option value="${esc(nom)}"></option>`).join("")}</datalist>
+          <p class="fine span2" data-lieu-note>${esc(lieuNote(printer.departement))}</p>
+          ${manage ? `<div class="composer composer-pair span2" data-composer="dept">
+            <input name="draftDept" maxlength="80" placeholder="Nouveau département" autocomplete="off" aria-label="Nouveau département">
+            <button class="btn" type="button" data-action="add-dept">Ajouter le département</button>
+          </div>
+          <div class="composer composer-pair span2" data-composer="lieu" data-lieu-draft ${printer.departement ? "" : "hidden"}>
+            <input name="draftLieu" maxlength="160" placeholder="Nouvel emplacement de ce département" autocomplete="off" aria-label="Nouvel emplacement">
+            <button class="btn" type="button" data-action="add-lieu">Ajouter l'emplacement</button>
+          </div>` : ""}
           <label class="check span2"><input type="checkbox" name="couleur" ${printer.couleur ? "checked" : ""}> Imprimante couleur</label>
           <label class="check span2"><input type="checkbox" name="aAdresse" ${hasIp ? "checked" : ""}> Cette imprimante a une adresse IP</label>
           <div class="ip-fields span2" ${hasIp ? "" : "hidden"}>
@@ -754,6 +765,32 @@ function adresseLabel(printer) {
 function lieuOptions(departement) {
   const known = (state.places || []).find((item) => item.nom === departement);
   return known ? known.emplacements.map((item) => item.nom) : [];
+}
+
+function departmentOptions(current) {
+  const names = departments();
+  const options = [`<option value="">Choisir un département</option>`];
+  for (const nom of names) {
+    options.push(`<option value="${esc(nom)}" ${nom === current ? "selected" : ""}>${esc(nom)}</option>`);
+  }
+  return options.join("");
+}
+
+function emplacementOptions(departement, current) {
+  const names = lieuOptions(departement);
+  const placeholder = departement ? "Choisir un emplacement" : "Choisissez d'abord un département";
+  const options = [`<option value="">${esc(placeholder)}</option>`];
+  for (const nom of names) {
+    options.push(`<option value="${esc(nom)}" ${nom === current ? "selected" : ""}>${esc(nom)}</option>`);
+  }
+  return options.join("");
+}
+
+function lieuNote(departement) {
+  if (!departement) return "Choisissez un département pour afficher ses emplacements.";
+  const count = lieuOptions(departement).length;
+  if (!count) return `${departement} n'a pas encore d'emplacement.`;
+  return `${count} emplacement${count > 1 ? "s" : ""} dans ${departement}.`;
 }
 
 function cartouchesOf(printer) {
@@ -1358,7 +1395,10 @@ function bindComposers() {
       if (event.key !== "Enter") return;
       event.preventDefault();
       event.stopPropagation();
-      if (composer.dataset.composer === "toner") addDraftToner();
+      const kind = composer.dataset.composer;
+      if (kind === "toner") addDraftToner();
+      else if (kind === "lieu") addDraftLieu();
+      else if (kind === "dept") addDraftDept();
       else addDraftKit();
     });
   }
@@ -1585,6 +1625,16 @@ function onClick(event) {
     addDraftKit();
     return;
   }
+  if (action === "add-lieu") {
+    event.preventDefault();
+    addDraftLieu();
+    return;
+  }
+  if (action === "add-dept") {
+    event.preventDefault();
+    addDraftDept();
+    return;
+  }
   if (action === "lire-snmp") {
     event.preventDefault();
     lireSnmpForm();
@@ -1729,11 +1779,117 @@ function onInput(event) {
   }
 }
 
-function refreshLieuList(form) {
-  const list = form.querySelector("#lieu-list");
-  if (!list) return;
-  const names = lieuOptions(form.departement.value.trim());
-  list.innerHTML = names.map((nom) => `<option value="${esc(nom)}"></option>`).join("");
+function syncEmplacements(form, preferred) {
+  const select = form.emplacement;
+  if (!select) return;
+  const departement = form.departement.value.trim();
+  const names = lieuOptions(departement);
+  const wanted = preferred === undefined ? select.value : preferred;
+  const keep = names.includes(wanted) ? wanted : "";
+  select.innerHTML = emplacementOptions(departement, keep);
+  select.value = keep;
+  const draft = form.querySelector("[data-lieu-draft]");
+  if (draft) draft.hidden = !departement;
+  const note = form.querySelector("[data-lieu-note]");
+  if (note) note.textContent = lieuNote(departement);
+}
+
+function syncDepartements(form, preferred) {
+  const select = form.departement;
+  if (!select) return;
+  const names = departments();
+  const wanted = preferred === undefined ? select.value : preferred;
+  const keep = names.includes(wanted) ? wanted : "";
+  select.innerHTML = departmentOptions(keep);
+  select.value = keep;
+  syncEmplacements(form);
+}
+
+async function addDraftDept() {
+  const form = document.getElementById("printer-form");
+  if (!form || !canManage()) return;
+  if (state.busy) {
+    showFormError(form, "Patientez, une opération est en cours.");
+    return;
+  }
+  const nom = form.draftDept?.value.trim() || "";
+  if (!nom) {
+    showFormError(form, "Nommez le département à ajouter.");
+    form.draftDept.focus();
+    return;
+  }
+  state.busy = true;
+  showFormError(form, "");
+  try {
+    try {
+      const saved = await api("/api/departements", { method: "POST", body: { nom } });
+      state.places = saved.departements;
+    } catch (err) {
+      if (err.status !== 409) throw err;
+      const fresh = await api("/api/places");
+      state.places = fresh.departements;
+    }
+    if (form.draftDept) form.draftDept.value = "";
+    syncDepartements(form, nom);
+    toast("Département ajouté.");
+    form.draftLieu?.focus();
+  } catch (err) {
+    if (!sessionLost(err)) showFormError(form, err.message);
+  } finally {
+    state.busy = false;
+  }
+}
+
+async function addDraftLieu() {
+  const form = document.getElementById("printer-form");
+  if (!form || !canManage()) return;
+  if (state.busy) {
+    showFormError(form, "Patientez, une opération est en cours.");
+    return;
+  }
+  const departement = form.departement.value.trim();
+  const nom = form.draftLieu?.value.trim() || "";
+  if (!departement) {
+    showFormError(form, "Choisissez le département avant d'ajouter un emplacement.");
+    form.departement.focus();
+    return;
+  }
+  if (!nom) {
+    showFormError(form, "Nommez l'emplacement à ajouter.");
+    form.draftLieu.focus();
+    return;
+  }
+  state.busy = true;
+  showFormError(form, "");
+  try {
+    let place = (state.places || []).find((item) => item.nom === departement);
+    if (!place) {
+      const created = await api("/api/departements", { method: "POST", body: { nom: departement } });
+      state.places = created.departements;
+      place = state.places.find((item) => item.nom === departement);
+    }
+    if (!place) throw new Error("Département introuvable.");
+    let created = true;
+    try {
+      const saved = await api("/api/emplacements", {
+        method: "POST",
+        body: { departementId: place.id, nom },
+      });
+      state.places = saved.departements;
+    } catch (err) {
+      if (err.status !== 409) throw err;
+      created = false;
+      const fresh = await api("/api/places");
+      state.places = fresh.departements;
+    }
+    if (form.draftLieu) form.draftLieu.value = "";
+    syncEmplacements(form, nom);
+    toast(created ? `Emplacement ajouté à ${departement}.` : `${nom} est déjà dans ${departement}.`);
+  } catch (err) {
+    if (!sessionLost(err)) showFormError(form, err.message);
+  } finally {
+    state.busy = false;
+  }
 }
 
 async function lireSnmpForm() {
@@ -1784,7 +1940,7 @@ function mergeSupplyRows(list, items, field, render) {
 function onChange(event) {
   const field = event.target;
   if (field.name === "departement" && field.form?.id === "printer-form") {
-    refreshLieuList(field.form);
+    syncEmplacements(field.form);
     return;
   }
   if (field.name === "aAdresse" && field.form?.id === "printer-form") {

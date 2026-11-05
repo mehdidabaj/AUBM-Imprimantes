@@ -274,6 +274,7 @@ tr.attention td:first-child { box-shadow: inset 3px 0 0 var(--yellow); }
   align-items: center;
   margin: 8px 0 12px;
 }
+.composer[hidden] { display: none; }
 .composer input, .place-list input {
   background: var(--elev);
   border: 1px solid var(--line);
