@@ -80,6 +80,21 @@ class SnmpLevelsTest(unittest.TestCase):
         self.assertEqual([item["value"] for item in reading["cartouches"]], [40, 25])
         self.assertEqual(reading["kits"], [{"label": "Kit de fusion", "level": 10}])
 
+    def test_quick_print_hex_dump_is_the_exact_name(self):
+        raw = (
+            "43 61 72 74 6F 75 63 68 65 20 64 65 20 74 6F 6E 65 72 "
+            "20 6E 6F 69 72 20 48 50 20 43 45 34 31 30 41 00"
+        )
+        walk = f"""
+.1.3.6.1.2.1.43.11.1.1.5.1.1 3
+.1.3.6.1.2.1.43.11.1.1.6.1.1 {raw}
+.1.3.6.1.2.1.43.11.1.1.8.1.1 100
+.1.3.6.1.2.1.43.11.1.1.9.1.1 73
+"""
+        reading = named_supplies(parse_walk(walk))
+        self.assertEqual(reading["cartouches"][0]["nom"], "Cartouche de toner noir HP CE410A")
+        self.assertEqual(reading["cartouches"][0]["value"], 73)
+
     def test_named_supplies_keep_the_printer_labels(self):
         reading = named_supplies(parse_walk(SAMPLE))
         types = [item["type"] for item in reading["cartouches"]]

@@ -80,7 +80,10 @@ def decode_value(raw):
         return decode_hex(text.split(":", 1)[1])
     if re.fullmatch(r"-?\d+", text):
         return int(text)
-    return tidy_name(unescape_snmp(unquote(text)))
+    text = unescape_snmp(unquote(text))
+    if looks_like_hex_dump(text):
+        return decode_hex(text)
+    return tidy_name(text)
 
 
 def unquote(text):
@@ -105,6 +108,11 @@ def unescape_snmp(text):
         return token
 
     return re.sub(r"\\([nrt\"\\]|[0-7]{1,3})", replace, text)
+
+
+def looks_like_hex_dump(text):
+    parts = text.split()
+    return len(parts) >= 2 and all(re.fullmatch(r"[0-9A-Fa-f]{2}", part) for part in parts)
 
 
 def decode_hex(hex_part):

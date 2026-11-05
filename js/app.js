@@ -86,8 +86,11 @@ function replacePrinter(printer) {
 }
 
 function uid(prefix) {
-  const bytes = crypto.randomUUID().slice(0, 8);
-  return `${prefix}-${bytes}`;
+  const bytes = new Uint8Array(4);
+  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes);
+  else for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${prefix}-${hex}`;
 }
 
 function route() {
@@ -1116,10 +1119,19 @@ async function saveUser(form) {
 
 async function savePrinter(form) {
   if (state.busy || !canManage()) return;
+  const error = document.getElementById("form-error");
   const id = form.dataset.id;
   const previous = id ? printerById(id) : null;
-  const result = readPrinter(form, previous);
-  const error = document.getElementById("form-error");
+  let result;
+  try {
+    result = readPrinter(form, previous);
+  } catch (err) {
+    if (error) {
+      error.hidden = false;
+      error.textContent = "L'enregistrement a échoué. Réessayez.";
+    }
+    return;
+  }
   if (result.error) {
     error.hidden = false;
     error.textContent = result.error;
@@ -1312,8 +1324,13 @@ function bindComposers() {
     button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      if (button.dataset.action === "add-toner") addDraftToner();
-      else addDraftKit();
+      try {
+        if (button.dataset.action === "add-toner") addDraftToner();
+        else addDraftKit();
+      } catch (err) {
+        const form = document.getElementById("printer-form");
+        if (form) showFormError(form, "L'ajout a échoué. Réessayez.");
+      }
     });
   }
   for (const composer of document.querySelectorAll("[data-composer]")) {
