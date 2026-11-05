@@ -1,0 +1,16 @@
+[Unit]
+Description=API MySQL du parc d'imprimantes AUBM
+After=network.target mysql.service mariadb.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+EnvironmentFile=/etc/aubm-imprimantes.env
+WorkingDirectory=__ROOT__
+ExecStart=/usr/bin/python3 __ROOT__/server/app.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
