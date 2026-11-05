@@ -65,7 +65,7 @@ Deux profils :
 - **Administrateur** : parc, interventions, départements et page Utilisateurs.
 - **Consultation** : tableau, inventaire, alertes, fiches et journal en lecture, plus les exports CSV et PDF. L'ajout, la modification et la suppression du parc restent fermés.
 
-À la première installation, le script crée le compte `admin` (ou la valeur de `AUBM_ADMIN_USER`) et affiche son mot de passe une seule fois. Il est aussi écrit dans `/etc/aubm-imprimantes.env` (`AUBM_ADMIN_PASSWORD`). Une réinstallation ne le réaffiche pas, car le mot de passe peut avoir été changé dans l'application. La page Utilisateurs permet d'ajouter un compte, de changer son profil, de le désactiver ou de poser un nouveau mot de passe. Le dernier administrateur actif reste en place.
+À la première installation, le script crée le compte `admin` (ou la valeur de `AUBM_ADMIN_USER`) et affiche son mot de passe une seule fois. Il est aussi écrit dans `/etc/aubm-imprimantes.env` (`AUBM_ADMIN_PASSWORD`). Une réinstallation ne le réaffiche pas, car le mot de passe peut avoir été changé dans l'application. La page Utilisateurs permet d'ajouter un compte, de changer son profil, de le désactiver, de poser un nouveau mot de passe ou de supprimer un compte ajouté. Le premier administrateur ne peut pas être supprimé. Le dernier administrateur actif reste en place.
 
 L'adresse `/api/health` reste publique pour le contrôle d'installation. Le reste de l'API exige une session. Les modifications exigent le profil administrateur.
 
@@ -118,6 +118,6 @@ L'administrateur peut en plus :
 - Ajouter les kits lorsqu'ils existent, avec un pourcentage ou la mention OK si le niveau n'est pas chiffré.
 - Noter l'observation finale (RAS ou le remplacement à prévoir).
 - Enregistrer une intervention (remplacement de toner, de kit, de photoconducteur).
-- Créer les comptes et choisir leur profil.
+- Créer les comptes, choisir leur profil et supprimer un compte ajouté. Le premier administrateur ne se supprime pas.
 - Gérer les départements et les emplacements qui leur sont liés. La fiche propose ensuite ces emplacements selon le département choisi.
 - Lire les niveaux des cartouches et des kits sur une imprimante joignable par adresse IPv4. Le bouton « Lire les cartouches et les kits » interroge la machine en SNMP (communauté `public` par défaut, modifiable sur la fiche). « Lire les IP » parcourt les machines qui ont une adresse. Une adresse `Localhost` n'est pas interrogée.

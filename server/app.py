@@ -616,13 +616,16 @@ def load_places(cur):
 
 
 def public_user(row):
-    return {
+    user = {
         "id": row["id"],
         "identifiant": row["identifiant"],
         "nom": row["nom"],
         "role": row["role"],
         "actif": bool(row["actif"]),
     }
+    if "premier" in row:
+        user["premier"] = bool(row["premier"])
+    return user
 
 
 def session_user(conn):
@@ -785,7 +788,8 @@ def list_users():
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, identifiant, nom, role, actif
+                SELECT id, identifiant, nom, role, actif,
+                       (id = (SELECT MIN(id) FROM utilisateurs)) AS premier
                   FROM utilisateurs
                  ORDER BY nom, identifiant
                 """
@@ -817,7 +821,12 @@ def create_user():
                 (identifiant, nom, generate_password_hash(password), role),
             )
             cur.execute(
-                "SELECT id, identifiant, nom, role, actif FROM utilisateurs WHERE id = %s",
+                """
+                SELECT id, identifiant, nom, role, actif,
+                       (id = (SELECT MIN(id) FROM utilisateurs)) AS premier
+                  FROM utilisateurs
+                 WHERE id = %s
+                """,
                 (cur.lastrowid,),
             )
             return {"user": public_user(cur.fetchone())}
@@ -872,10 +881,50 @@ def update_user(user_id):
                     (nom, role, int(actif), user_id),
                 )
             cur.execute(
-                "SELECT id, identifiant, nom, role, actif FROM utilisateurs WHERE id = %s",
+                """
+                SELECT id, identifiant, nom, role, actif,
+                       (id = (SELECT MIN(id) FROM utilisateurs)) AS premier
+                  FROM utilisateurs
+                 WHERE id = %s
+                """,
                 (user_id,),
             )
             return {"user": public_user(cur.fetchone())}
+
+    return jsonify(run(write))
+
+
+@app.delete("/api/users/<int:user_id>")
+@guarded(admin=True)
+def delete_user(user_id):
+    def write(conn):
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM utilisateurs ORDER BY id ASC LIMIT 1 FOR UPDATE"
+            )
+            first = cur.fetchone()
+            cur.execute(
+                "SELECT id, role, actif FROM utilisateurs WHERE id = %s FOR UPDATE",
+                (user_id,),
+            )
+            current = cur.fetchone()
+            if not current:
+                raise ApiError("Compte introuvable.", 404)
+            if first and current["id"] == first["id"]:
+                raise ApiError("Le premier administrateur ne peut pas être supprimé.", 400)
+            if current["role"] == "admin" and current["actif"]:
+                cur.execute(
+                    """
+                    SELECT COUNT(*) AS n
+                      FROM utilisateurs
+                     WHERE role = 'admin' AND actif = 1 AND id <> %s
+                    """,
+                    (user_id,),
+                )
+                if cur.fetchone()["n"] == 0:
+                    raise ApiError("Le dernier administrateur actif doit rester en place.", 400)
+            cur.execute("DELETE FROM utilisateurs WHERE id = %s", (user_id,))
+            return {"ok": True}
 
     return jsonify(run(write))
 

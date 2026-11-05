@@ -535,7 +535,7 @@ function utilisateursHtml() {
       <header class="card-head">
         <h2>${state.users.length} compte${state.users.length > 1 ? "s" : ""}</h2>
       </header>
-      <p class="hint">L'administrateur gère le parc. Le profil Consultation ouvre les fiches, les filtres et les exports, sans modifier les machines.</p>
+      <p class="hint">L'administrateur gère le parc. Le profil Consultation ouvre les fiches, les filtres et les exports, sans modifier les machines. Un compte ajouté peut être supprimé. Le premier administrateur reste en place.</p>
       <div class="user-list">
         ${state.users.map(userForm).join("")}
       </div>
@@ -594,7 +594,11 @@ function userForm(user) {
     <p class="form-error" hidden></p>
     <div class="form-actions">
       <button class="btn" type="submit">Enregistrer</button>
+      ${user.premier
+        ? ""
+        : `<button class="btn ghost" type="button" data-action="delete-user" data-id="${user.id}">Supprimer</button>`}
     </div>
+    ${user.premier ? `<p class="fine">Le premier administrateur ne peut pas être supprimé.</p>` : ""}
   </form>`;
 }
 
@@ -1126,6 +1130,28 @@ async function createUser(form) {
   }
 }
 
+async function deleteUser(id) {
+  if (state.busy) return;
+  const user = (state.users || []).find((item) => item.id === id);
+  if (!user || user.premier) return;
+  state.busy = true;
+  try {
+    await api(`/api/users/${id}`, { method: "DELETE" });
+    state.users = (state.users || []).filter((item) => item.id !== id);
+    if (state.user && state.user.id === id) {
+      toast("Compte supprimé.");
+      await logout();
+      return;
+    }
+    toast(`Compte ${user.identifiant} supprimé.`);
+    paint();
+  } catch (err) {
+    if (!sessionLost(err)) toast(err.message);
+  } finally {
+    state.busy = false;
+  }
+}
+
 async function saveUser(form) {
   if (state.busy) return;
   const id = Number(form.dataset.userId);
@@ -1615,6 +1641,20 @@ function onClick(event) {
   if (action === "relever-parc") {
     event.preventDefault();
     releverParc();
+    return;
+  }
+  if (action === "delete-user") {
+    event.preventDefault();
+    if (!canManage()) return;
+    const id = Number(actionNode.dataset.id);
+    const user = (state.users || []).find((item) => item.id === id);
+    if (!user || user.premier) return;
+    if (actionNode.dataset.confirm !== "1") {
+      actionNode.dataset.confirm = "1";
+      actionNode.textContent = "Confirmer la suppression";
+      return;
+    }
+    deleteUser(id);
     return;
   }
   if (action === "delete-dept") {
