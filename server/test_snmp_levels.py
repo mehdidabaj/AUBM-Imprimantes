@@ -1,0 +1,146 @@
+"""Contrôles du décodage SNMP, sans interroger le réseau."""
+
+import unittest
+
+from snmp_levels import apply_reading, interpret, named_supplies, parse_walk, percentage, valid_ipv4
+
+SAMPLE = """
+.1.3.6.1.2.1.43.11.1.1.5.1.1 3
+.1.3.6.1.2.1.43.11.1.1.6.1.1 "Black Toner"
+.1.3.6.1.2.1.43.11.1.1.8.1.1 100
+.1.3.6.1.2.1.43.11.1.1.9.1.1 40
+.1.3.6.1.2.1.43.11.1.1.5.1.2 21
+.1.3.6.1.2.1.43.11.1.1.6.1.2 "Cyan Cartridge"
+.1.3.6.1.2.1.43.11.1.1.8.1.2 2000
+.1.3.6.1.2.1.43.11.1.1.9.1.2 500
+.1.3.6.1.2.1.43.11.1.1.5.1.3 15
+.1.3.6.1.2.1.43.11.1.1.6.1.3 "Kit de fusion"
+.1.3.6.1.2.1.43.11.1.1.8.1.3 100000
+.1.3.6.1.2.1.43.11.1.1.9.1.3 25000
+.1.3.6.1.2.1.43.11.1.1.5.1.4 3
+.1.3.6.1.2.1.43.11.1.1.6.1.4 "Noir photo"
+.1.3.6.1.2.1.43.11.1.1.8.1.4 100
+.1.3.6.1.2.1.43.11.1.1.9.1.4 15
+.1.3.6.1.2.1.43.11.1.1.5.1.5 9
+.1.3.6.1.2.1.43.11.1.1.6.1.5 "Tambour"
+.1.3.6.1.2.1.43.11.1.1.8.1.5 100
+.1.3.6.1.2.1.43.11.1.1.9.1.5 -3
+"""
+
+
+class SnmpLevelsTest(unittest.TestCase):
+    def test_percentages_and_kinds(self):
+        reading = interpret(parse_walk(SAMPLE))
+        self.assertEqual(reading["channels"], {"noir": 40, "cyan": 25})
+        self.assertEqual(reading["extras"], [{"label": "Noir photo", "value": 15, "swatch": "#2b3038"}])
+        self.assertEqual(reading["kits"], [{"label": "Kit de fusion", "value": 25}])
+
+    def test_plotter_keeps_colors_as_extras(self):
+        reading = interpret(parse_walk(SAMPLE), plotter=True)
+        labels = [item["label"] for item in reading["extras"]]
+        self.assertEqual(reading["channels"], {})
+        self.assertIn("Black Toner", labels)
+        self.assertIn("Cyan Cartridge", labels)
+
+    def test_apply_updates_existing_kit_and_keeps_manual_toner(self):
+        printer = {
+            "noir": 100,
+            "cyan": None,
+            "extra": [{"key": "ton-1", "label": "Gris", "value": 80, "swatch": "#777"}],
+            "kits": [{"label": "Kit de fusion", "level": 90}],
+        }
+        apply_reading(printer, interpret(parse_walk(SAMPLE)))
+        self.assertEqual(printer["noir"], 40)
+        self.assertEqual(printer["cyan"], 25)
+        self.assertEqual(printer["extra"][0]["value"], 80)
+        self.assertEqual(printer["extra"][1]["label"], "Noir photo")
+        self.assertEqual(printer["kits"][0]["level"], 25)
+
+    def test_hex_names_stay_exact(self):
+        wrapped = """
+.1.3.6.1.2.1.43.11.1.1.5.1.1 3
+.1.3.6.1.2.1.43.11.1.1.6.1.1 Hex-STRING: 00 43 00 61 00 72
+00 74 00 6F 00 75 00 63 00 68 00 65 00 20 00 6E 00 6F 00 69 00 72
+.1.3.6.1.2.1.43.11.1.1.8.1.1 100
+.1.3.6.1.2.1.43.11.1.1.9.1.1 40
+.1.3.6.1.2.1.43.11.1.1.5.1.2 3
+.1.3.6.1.2.1.43.11.1.1.6.1.2 Hex-STRING: 43 61 72 74 6F 75 63 68 65 20 63 79 61 6E 00
+.1.3.6.1.2.1.43.11.1.1.8.1.2 100
+.1.3.6.1.2.1.43.11.1.1.9.1.2 25
+.1.3.6.1.2.1.43.11.1.1.5.1.3 4
+.1.3.6.1.2.1.43.11.1.1.6.1.3 "Kit de fusion"
+.1.3.6.1.2.1.43.11.1.1.8.1.3 100
+.1.3.6.1.2.1.43.11.1.1.9.1.3 10
+"""
+        reading = named_supplies(parse_walk(wrapped))
+        self.assertEqual(
+            [item["nom"] for item in reading["cartouches"]],
+            ["Cartouche noir", "Cartouche cyan"],
+        )
+        self.assertEqual([item["value"] for item in reading["cartouches"]], [40, 25])
+        self.assertEqual(reading["kits"], [{"label": "Kit de fusion", "level": 10}])
+
+    def test_quick_print_kit_hex_from_the_form(self):
+        cartridge = (
+            "43 61 72 74 6F 75 63 68 65 20 64 65 20 6E 6F 69 72 "
+            "20 39 30 41 20 48 50 20 43 45 33 39 30 41 00"
+        )
+        kit_text = "Kit de maintenance HP 110V-CF064A, 220V-CF065A"
+        kit = " ".join(f"{byte:02X}" for byte in kit_text.encode("utf-8") + b"\x00")
+        walk = f"""
+.1.3.6.1.2.1.43.11.1.1.5.1.1 3
+.1.3.6.1.2.1.43.11.1.1.6.1.1 {cartridge}
+.1.3.6.1.2.1.43.11.1.1.8.1.1 100
+.1.3.6.1.2.1.43.11.1.1.9.1.1 73
+.1.3.6.1.2.1.43.11.1.1.5.1.2 4
+.1.3.6.1.2.1.43.11.1.1.6.1.2 {kit}
+.1.3.6.1.2.1.43.11.1.1.8.1.2 100
+.1.3.6.1.2.1.43.11.1.1.9.1.2 71
+"""
+        reading = named_supplies(parse_walk(walk))
+        self.assertEqual(reading["cartouches"][0]["nom"], "Cartouche de noir 90A HP CE390A")
+        self.assertEqual(reading["cartouches"][0]["value"], 73)
+        self.assertEqual(reading["kits"][0]["label"], kit_text)
+        self.assertEqual(reading["kits"][0]["level"], 71)
+
+    def test_plain_name_is_not_rewritten(self):
+        from snmp_levels import readable_supply_name
+        self.assertEqual(readable_supply_name("HP"), "HP")
+        self.assertEqual(readable_supply_name("Gris"), "Gris")
+        self.assertEqual(readable_supply_name("TEST"), "TEST")
+
+    def test_quick_print_hex_dump_is_the_exact_name(self):
+        raw = (
+            "43 61 72 74 6F 75 63 68 65 20 64 65 20 74 6F 6E 65 72 "
+            "20 6E 6F 69 72 20 48 50 20 43 45 34 31 30 41 00"
+        )
+        walk = f"""
+.1.3.6.1.2.1.43.11.1.1.5.1.1 3
+.1.3.6.1.2.1.43.11.1.1.6.1.1 {raw}
+.1.3.6.1.2.1.43.11.1.1.8.1.1 100
+.1.3.6.1.2.1.43.11.1.1.9.1.1 73
+"""
+        reading = named_supplies(parse_walk(walk))
+        self.assertEqual(reading["cartouches"][0]["nom"], "Cartouche de toner noir HP CE410A")
+        self.assertEqual(reading["cartouches"][0]["value"], 73)
+
+    def test_named_supplies_keep_the_printer_labels(self):
+        reading = named_supplies(parse_walk(SAMPLE))
+        types = [item["type"] for item in reading["cartouches"]]
+        self.assertEqual(types, ["Black Toner", "Cyan Cartridge", "Noir photo"])
+        self.assertEqual(reading["cartouches"][0]["value"], 40)
+        self.assertEqual(reading["cartouches"][1]["value"], 25)
+        self.assertEqual(reading["kits"], [{"label": "Kit de fusion", "level": 25}])
+
+    def test_unknown_level_is_ignored(self):
+        self.assertIsNone(percentage(-3, 100))
+        self.assertIsNone(percentage(None, 100))
+
+    def test_ipv4(self):
+        self.assertTrue(valid_ipv4("195.200.200.12"))
+        self.assertFalse(valid_ipv4("Localhost"))
+        self.assertFalse(valid_ipv4("195.200.200.512"))
+
+
+if __name__ == "__main__":
+    unittest.main()
