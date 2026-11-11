@@ -14,7 +14,7 @@ COLORS = (
     ("jaune", ("jaune", "yellow", "gelb", "giallo"), "#c89208"),
 )
 IPV4_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
-COMMUNITY_RE = re.compile(r"[A-Za-z0-9_.:@+-]{1,64}")
+COMMUNITY_RE = re.compile(r"[A-Za-z0-9_.:@][A-Za-z0-9_.:@+-]{0,63}")
 
 
 class SnmpError(Exception):
@@ -25,6 +25,18 @@ def valid_ipv4(value):
     if not value or not IPV4_RE.fullmatch(value):
         return False
     return all(0 <= int(part) <= 255 for part in value.split("."))
+
+
+def queryable_ipv4(value):
+    """Adresse d'imprimante : pas la boucle locale, ni le lien local, ni le multicast."""
+    if not valid_ipv4(value):
+        return False
+    first, second, _third, _fourth = (int(part) for part in value.split("."))
+    if first in (0, 127) or first >= 224:
+        return False
+    if first == 169 and second == 254:
+        return False
+    return True
 
 
 def logical_lines(text):

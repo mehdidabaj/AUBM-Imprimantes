@@ -1,5 +1,5 @@
 import {
-  esc, isLocal, isAntenne, tonerLevels, kitLevels, statut, statutLabel,
+  esc, safeSwatch, isLocal, isAntenne, tonerLevels, kitLevels, statut, statutLabel,
   motifs, fabricant, filtrer, trier, parDepartement, resume, toCsv, formatDate, formatDateCourt,
   readableSupplyName,
 } from "./logic.js";
@@ -462,7 +462,7 @@ function selectionNote(rows) {
 function miniLevels(printer) {
   const levels = tonerLevels(printer);
   if (!levels.length) return `<span class="muted">—</span>`;
-  return `<span class="minis">${levels.map((level) => `<i title="${esc(level.label)} ${level.value} %" style="--v:${level.value}%;--c:${level.swatch}"></i>`).join("")}</span>`;
+  return `<span class="minis">${levels.map((level) => `<i title="${esc(level.label)} ${esc(level.value)} %" style="--v:${Number.isFinite(Number(level.value)) ? Number(level.value) : 0}%;--c:${safeSwatch(level.swatch)}"></i>`).join("")}</span>`;
 }
 
 function alertesHtml() {
@@ -850,18 +850,20 @@ function levelFields(printer) {
 
 function slider(key, label, value, swatch, extra) {
   const known = value !== null && value !== undefined && value !== "";
-  const shown = known ? Number(value) : 0;
+  const numeric = Number(value);
+  const shown = known && Number.isFinite(numeric) ? Math.min(100, Math.max(0, numeric)) : 0;
+  const color = safeSwatch(swatch);
   return `<div class="gauge ${known ? "" : "is-empty"}">
     <div class="gauge-top">
-      <span class="swatch" style="background:${swatch}"></span>
+      <span class="swatch" style="background:${color}"></span>
       <span>${esc(label)}</span>
-      <strong data-val="${esc(key)}">${known ? `${shown} %` : "—"}</strong>
+      <strong data-val="${esc(key)}">${known && Number.isFinite(numeric) ? `${shown} %` : "—"}</strong>
     </div>
     <div class="gauge-controls">
       <input type="range" min="0" max="100" step="1" value="${shown}" data-sync="${esc(key)}" aria-label="${esc(label)}">
-      <input type="number" min="0" max="100" step="1" name="${extra ? `extra:${key}` : key}" data-sync="${esc(key)}" value="${known ? shown : ""}" placeholder="—" inputmode="numeric" aria-label="${esc(label)} en pourcentage">
+      <input type="number" min="0" max="100" step="1" name="${esc(extra ? `extra:${key}` : key)}" data-sync="${esc(key)}" value="${known && Number.isFinite(numeric) ? shown : ""}" placeholder="—" inputmode="numeric" aria-label="${esc(label)} en pourcentage">
     </div>
-    <div class="track" aria-hidden="true"><div class="fill" style="width:${known ? shown : 0}%;background:${swatch}"></div></div>
+    <div class="track" aria-hidden="true"><div class="fill" style="width:${shown}%;background:${color}"></div></div>
   </div>`;
 }
 

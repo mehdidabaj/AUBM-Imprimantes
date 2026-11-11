@@ -5,6 +5,8 @@ import logging
 import os
 import re
 import secrets
+import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -20,8 +22,8 @@ from snmp_levels import (
     SnmpError,
     named_supplies,
     query_supplies,
+    queryable_ipv4,
     readable_supply_name,
-    valid_ipv4,
 )
 
 ROOT = Path(__file__).resolve().parent
@@ -66,9 +68,15 @@ app = Flask(__name__)
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=False,
+    SESSION_COOKIE_SECURE=os.environ.get("AUBM_COOKIE_SECURE", "") == "1",
     PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
+    MAX_CONTENT_LENGTH=512 * 1024,
 )
+LOGIN_WINDOW = 600
+LOGIN_LIMIT = 8
+_login_failures = {}
+_login_lock = threading.Lock()
+_dummy_password_hash = None
 try:
     app.json.ensure_ascii = False
 except AttributeError:
@@ -158,9 +166,66 @@ def percent(value, required=False):
 
 def clean_community(value):
     community = clean_text(value, 64) or "public"
-    if not COMMUNITY_RE.fullmatch(community):
+    if community.startswith("-") or not COMMUNITY_RE.fullmatch(community):
         raise ApiError("Communauté SNMP invalide.", 400)
     return community
+
+
+def safe_swatch(value):
+    text = "" if value is None else str(value)
+    if SWATCH_RE.fullmatch(text):
+        return text
+    return "#5b4636"
+
+
+def client_address():
+    forwarded = request.headers.get("X-Real-IP", "").strip()
+    if re.fullmatch(r"[0-9A-Fa-f:.]+", forwarded or ""):
+        return forwarded
+    return request.remote_addr or "local"
+
+
+def _prune_failures(attempts, now):
+    return [stamp for stamp in attempts if now - stamp < LOGIN_WINDOW]
+
+
+def _store_failures(key, attempts):
+    if len(_login_failures) > 4000:
+        _login_failures.clear()
+    if attempts:
+        _login_failures[key] = attempts
+    else:
+        _login_failures.pop(key, None)
+
+
+def login_is_blocked(address, identifiant):
+    now = time.monotonic()
+    key = (address, identifiant)
+    with _login_lock:
+        attempts = _prune_failures(_login_failures.get(key, []), now)
+        _store_failures(key, attempts)
+        return len(attempts) >= LOGIN_LIMIT
+
+
+def register_login_failure(address, identifiant):
+    now = time.monotonic()
+    key = (address, identifiant)
+    with _login_lock:
+        attempts = _prune_failures(_login_failures.get(key, []), now)
+        attempts.append(now)
+        _store_failures(key, attempts)
+
+
+def clear_login_failures(address, identifiant):
+    with _login_lock:
+        _login_failures.pop((address, identifiant), None)
+
+
+def dummy_password_hash():
+    global _dummy_password_hash
+    if _dummy_password_hash is None:
+        _dummy_password_hash = generate_password_hash("aubm-not-a-password")
+    return _dummy_password_hash
 
 
 def clean_instant(value):
@@ -524,7 +589,7 @@ def assemble(row, toners, kits):
             "marque": toner.get("marque") or "",
             "type": toner.get("genre") or toner["libelle"],
             "value": toner["pourcentage"],
-            "swatch": toner["swatch"] or "#2b3038",
+            "swatch": safe_swatch(toner["swatch"]),
         }
         for toner in extra_rows
     ] or None
@@ -534,7 +599,7 @@ def assemble(row, toners, kits):
             "marque": toner.get("marque") or "",
             "type": toner.get("genre") or toner["libelle"],
             "value": toner["pourcentage"],
-            "swatch": toner["swatch"] or "#2b3038",
+            "swatch": safe_swatch(toner["swatch"]),
         }
         for toner in toners
     ]
@@ -726,10 +791,29 @@ def payload():
     return data
 
 
+@app.before_request
+def reject_non_json_writes():
+    if request.method not in {"POST", "PUT", "PATCH"} or not request.path.startswith("/api/"):
+        return None
+    if not request.content_length:
+        return None
+    if request.is_json:
+        return None
+    return jsonify(error="Requête invalide."), 415
+
+
 @app.after_request
 def no_store(response):
     response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     return response
+
+
+@app.errorhandler(413)
+def too_large(_err):
+    return jsonify(error="Requête trop volumineuse."), 413
 
 
 @app.get("/api/health")
@@ -748,6 +832,12 @@ def login():
     body = payload()
     identifiant = clean_login(body.get("identifiant"))
     password = "" if body.get("motDePasse") is None else str(body.get("motDePasse"))
+    address = client_address()
+    if login_is_blocked(address, identifiant):
+        raise ApiError("Trop de tentatives. Réessayez dans quelques minutes.", 429)
+    if len(password) > 200:
+        register_login_failure(address, identifiant)
+        raise ApiError("Identifiant ou mot de passe incorrect.", 401)
 
     def read(conn):
         with conn.cursor() as cur:
@@ -762,8 +852,12 @@ def login():
             return cur.fetchone()
 
     row = run(read)
-    if not row or not row["actif"] or not check_password_hash(row["mot_de_passe"], password):
+    stored = row["mot_de_passe"] if row else dummy_password_hash()
+    password_ok = check_password_hash(stored, password)
+    if not row or not row["actif"] or not password_ok:
+        register_login_failure(address, identifiant)
         raise ApiError("Identifiant ou mot de passe incorrect.", 401)
+    clear_login_failures(address, identifiant)
     session.clear()
     session["user_id"] = row["id"]
     session.permanent = True
@@ -1217,8 +1311,8 @@ def merge_named(existing, incoming, field):
 
 
 def read_snmp(address, community):
-    if not valid_ipv4(address):
-        raise ApiError("Indiquez une adresse IPv4 pour lire les niveaux.", 400)
+    if not queryable_ipv4(address):
+        raise ApiError("Indiquez une adresse IPv4 du réseau des imprimantes.", 400)
     try:
         supplies = query_supplies(address, clean_community(community))
     except SnmpError as exc:

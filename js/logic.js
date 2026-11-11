@@ -1,3 +1,7 @@
+export function safeSwatch(value) {
+  return /^#[0-9A-Fa-f]{3,8}$/.test(String(value ?? "")) ? String(value) : "#5b4636";
+}
+
 export function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (ch) => (
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]
