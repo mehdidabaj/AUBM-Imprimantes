@@ -9,12 +9,10 @@ Sur le serveur, en root ou avec `sudo` :
 ```bash
 sudo apt update
 sudo apt install -y git
-sudo git clone -b cursor/gestion-imprimantes-e995 https://github.com/mehdidabaj/AUBM-Imprimantes.git /opt/aubm-imprimantes
+sudo git clone https://github.com/mehdidabaj/AUBM-Imprimantes.git /opt/aubm-imprimantes
 cd /opt/aubm-imprimantes
 sudo ./deploy/install-debian.sh
 ```
-
-Une fois cette branche fusionnée dans `main`, le clone peut se faire sans `-b`.
 
 Le script installe Nginx, le serveur MySQL des dépôts Debian (paquet `default-mysql-server`), charge le schéma et démarre l'API (`aubm-imprimantes`, port local 8765). Nginx publie le site et relaie `/api/`. Le parc démarre vide.
 
@@ -33,7 +31,7 @@ GLPI garde le port 80 et sa base MySQL. Le parc écoute sur le port 8080 et util
 ```bash
 sudo apt update
 sudo apt install -y git
-sudo git clone -b cursor/gestion-imprimantes-e995 https://github.com/mehdidabaj/AUBM-Imprimantes.git /opt/aubm-imprimantes
+sudo git clone https://github.com/mehdidabaj/AUBM-Imprimantes.git /opt/aubm-imprimantes
 cd /opt/aubm-imprimantes
 sudo ./deploy/install-debian.sh --server-name 195.200.200.16 --listen-port 8080
 ```
@@ -44,6 +42,7 @@ Si le dépôt est déjà cloné :
 
 ```bash
 cd /opt/aubm-imprimantes
+sudo git checkout main
 sudo git pull
 sudo ./deploy/install-debian.sh --server-name 195.200.200.16 --listen-port 8080
 ```
@@ -52,6 +51,7 @@ Contrôle : `curl -s http://127.0.0.1:8080/api/health` doit répondre `"ok": tru
 
 ```bash
 cd /opt/aubm-imprimantes
+sudo git checkout main
 sudo git pull
 sudo ./deploy/install-debian.sh --server-name 195.200.200.16 --listen-port 8080 --vider
 ```
@@ -65,7 +65,9 @@ Deux profils :
 - **Administrateur** : parc, interventions, départements et page Utilisateurs.
 - **Consultation** : tableau, inventaire, alertes, fiches et journal en lecture, plus les exports CSV et PDF. L'ajout, la modification et la suppression du parc restent fermés.
 
-À la première installation, le script crée le compte `admin` (ou la valeur de `AUBM_ADMIN_USER`) et affiche son mot de passe une seule fois. Il est aussi écrit dans `/etc/aubm-imprimantes.env` (`AUBM_ADMIN_PASSWORD`). Une réinstallation ne le réaffiche pas, car le mot de passe peut avoir été changé dans l'application. La page Utilisateurs permet d'ajouter un compte, de changer son profil, de le désactiver, de poser un nouveau mot de passe ou de supprimer un compte ajouté. Le premier administrateur ne peut pas être supprimé. Le dernier administrateur actif reste en place.
+À la première installation, le script crée le compte `admin` (ou la valeur de `AUBM_ADMIN_USER`) et affiche son mot de passe une seule fois. Il le retire ensuite de `/etc/aubm-imprimantes.env`. La base ne garde que l'empreinte scrypt. Une réinstallation ne le réaffiche pas. La page Utilisateurs permet d'ajouter un compte, de changer son profil, de le désactiver, de poser un nouveau mot de passe ou de supprimer un compte ajouté. Le premier administrateur ne peut pas être supprimé. Le dernier administrateur actif reste en place.
+
+L'audit, les choix d'architecture et la checklist de mise à jour sont dans `docs/AUDIT.md`, `docs/adr/0001-architecture.md` et `docs/DEPLOIEMENT.md`. Les tests se lancent avec `./scripts/test.sh`.
 
 L'adresse `/api/health` reste publique pour le contrôle d'installation. Le reste de l'API exige une session. Les modifications exigent le profil administrateur.
 
@@ -73,6 +75,7 @@ Pour mettre à jour après un changement, relancez le script avec les mêmes opt
 
 ```bash
 cd /opt/aubm-imprimantes
+sudo git checkout main
 sudo git pull
 sudo ./deploy/install-debian.sh --server-name imprimantes.exemple.ma
 ```
@@ -81,6 +84,7 @@ Sur `195.200.200.16`, où GLPI occupe le port 80, gardez le port 8080 :
 
 ```bash
 cd /opt/aubm-imprimantes
+sudo git checkout main
 sudo git pull
 sudo ./deploy/install-debian.sh --server-name 195.200.200.16 --listen-port 8080
 ```
