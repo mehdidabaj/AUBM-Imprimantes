@@ -567,10 +567,38 @@ def load_printers(cur):
 
 
 def load_one(cur, printer_id):
-    for printer in load_printers(cur):
-        if printer["id"] == printer_id:
-            return printer
-    raise ApiError("Imprimante introuvable.", 404)
+    cur.execute(
+        """
+        SELECT id, nom, departement, emplacement, adresse, couleur, fourniture,
+               releve, observation, ecart, snmp_communaute, niveaux_le
+          FROM imprimantes
+         WHERE id = %s
+        """,
+        (printer_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise ApiError("Imprimante introuvable.", 404)
+    cur.execute(
+        """
+        SELECT imprimante_id, cle, libelle, marque, genre, pourcentage, swatch, extra, ordre
+          FROM toners
+         WHERE imprimante_id = %s
+         ORDER BY ordre, id
+        """,
+        (printer_id,),
+    )
+    toners = cur.fetchall()
+    cur.execute(
+        """
+        SELECT imprimante_id, libelle, pourcentage, ordre
+          FROM kits
+         WHERE imprimante_id = %s
+         ORDER BY ordre, id
+        """,
+        (printer_id,),
+    )
+    return assemble(row, toners, cur.fetchall())
 
 
 def assemble(row, toners, kits):
