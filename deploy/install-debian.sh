@@ -333,7 +333,7 @@ SQL
   echo "Relevé du 4 juin 2025 retiré : ${SNAPSHOT} imprimante(s)."
 fi
 
-EXISTING_USERS="$(mysql --protocol=socket -uroot -N -e "SELECT COUNT(*) FROM utilisateurs" "$AUBM_DB_NAME" 2>/dev/null || echo 0)"
+EXISTING_USERS="$(mysql --protocol=socket -uroot -N -e "SELECT COUNT(*) FROM utilisateurs" "$AUBM_DB_NAME")"
 if [[ "${EXISTING_USERS:-0}" -eq 0 && -z "${AUBM_ADMIN_PASSWORD:-}" ]]; then
   AUBM_ADMIN_PASSWORD="Aubm_$(openssl rand -hex 8)"
   echo "AUBM_ADMIN_PASSWORD=${AUBM_ADMIN_PASSWORD}" >> "$ENV_FILE"
