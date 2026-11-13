@@ -189,9 +189,9 @@ set +a
 : "${AUBM_PORT:=8765}"
 : "${AUBM_SECRET:?AUBM_SECRET manquant dans ${ENV_FILE}}"
 : "${AUBM_ADMIN_USER:=admin}"
-: "${AUBM_ADMIN_PASSWORD:?AUBM_ADMIN_PASSWORD manquant dans ${ENV_FILE}}"
+: "${AUBM_ADMIN_PASSWORD:=}"
 
-if [[ ${#AUBM_ADMIN_PASSWORD} -lt 8 ]]; then
+if [[ -n "$AUBM_ADMIN_PASSWORD" && ${#AUBM_ADMIN_PASSWORD} -lt 8 ]]; then
   echo "AUBM_ADMIN_PASSWORD doit contenir au moins 8 caractères." >&2
   exit 1
 fi
@@ -331,6 +331,13 @@ DELETE departements FROM departements
  WHERE imprimantes.id IS NULL;
 SQL
   echo "Relevé du 4 juin 2025 retiré : ${SNAPSHOT} imprimante(s)."
+fi
+
+EXISTING_USERS="$(mysql --protocol=socket -uroot -N -e "SELECT COUNT(*) FROM utilisateurs" "$AUBM_DB_NAME" 2>/dev/null || echo 0)"
+if [[ "${EXISTING_USERS:-0}" -eq 0 && -z "${AUBM_ADMIN_PASSWORD:-}" ]]; then
+  AUBM_ADMIN_PASSWORD="Aubm_$(openssl rand -hex 8)"
+  echo "AUBM_ADMIN_PASSWORD=${AUBM_ADMIN_PASSWORD}" >> "$ENV_FILE"
+  NEW_ADMIN=1
 fi
 
 python3 -m py_compile "$ROOT/server/app.py"
@@ -485,7 +492,14 @@ if [[ "$NEW_ADMIN" -eq 1 ]]; then
 Compte administrateur créé.
   Identifiant : ${AUBM_ADMIN_USER}
   Mot de passe : ${AUBM_ADMIN_PASSWORD}
-Ce mot de passe est aussi dans ${ENV_FILE}. Il n'est affiché qu'à la création.
-Changez-le ensuite dans la page Utilisateurs.
+Notez-le maintenant : il n'est pas conservé dans ${ENV_FILE}.
+La base ne garde que son empreinte. Changez-le ensuite dans la page Utilisateurs.
 EOF
+fi
+
+if grep -q '^AUBM_ADMIN_PASSWORD=' "$ENV_FILE"; then
+  sed -i '/^AUBM_ADMIN_PASSWORD=/d' "$ENV_FILE"
+  if [[ "$NEW_ADMIN" -ne 1 ]]; then
+    echo "Le mot de passe administrateur en clair a été retiré de ${ENV_FILE}."
+  fi
 fi

@@ -13,6 +13,35 @@ class SwatchTests(unittest.TestCase):
         self.assertEqual(api.safe_swatch("url(https://example.test)"), "#5b4636")
 
 
+class ClientAddressTests(unittest.TestCase):
+    def test_real_ip_is_ignored_unless_the_peer_is_local(self):
+        with api.app.test_request_context(
+            "/",
+            environ_base={"REMOTE_ADDR": "198.51.100.4"},
+            headers={"X-Real-IP": "203.0.113.50"},
+        ):
+            self.assertEqual(api.client_address(), "198.51.100.4")
+
+    def test_nginx_on_loopback_may_set_the_client_address(self):
+        with api.app.test_request_context(
+            "/",
+            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+            headers={"X-Real-IP": "203.0.113.50"},
+        ):
+            self.assertEqual(api.client_address(), "203.0.113.50")
+
+
+class IntegrityTests(unittest.TestCase):
+    def test_duplicate_login_is_named(self):
+        message = api.integrity_message(Exception("Duplicate entry for key 'uniq_identifiant'"))
+        self.assertEqual(message, "Cet identifiant est déjà utilisé.")
+
+    def test_password_hash_is_scrypt(self):
+        stored = api.hash_password("exemple-uniquement")
+        self.assertTrue(stored.startswith("scrypt:"))
+        self.assertNotIn("exemple-uniquement", stored)
+
+
 class AddressTests(unittest.TestCase):
     def test_printer_networks_stay_allowed(self):
         self.assertTrue(queryable_ipv4("192.168.1.20"))

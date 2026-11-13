@@ -135,10 +135,21 @@ def run(fn):
     except ApiError:
         raise
     except IntegrityError as exc:
-        raise ApiError("Cette imprimante existe déjà.", 409) from exc
+        raise ApiError(integrity_message(exc), 409) from exc
     except MySQLError as exc:
         app.logger.exception("requête MySQL")
         raise ApiError("La base MySQL a refusé l'opération.", 500) from exc
+
+
+def integrity_message(exc):
+    detail = str(exc).lower()
+    if "uniq_identifiant" in detail or "utilisateurs" in detail:
+        return "Cet identifiant est déjà utilisé."
+    return "Cette imprimante existe déjà."
+
+
+def hash_password(password):
+    return generate_password_hash(password, method="scrypt")
 
 
 def clean_text(value, limit, required=False, field="Champ"):
@@ -179,10 +190,11 @@ def safe_swatch(value):
 
 
 def client_address():
+    remote = request.remote_addr or ""
     forwarded = request.headers.get("X-Real-IP", "").strip()
-    if re.fullmatch(r"[0-9A-Fa-f:.]+", forwarded or ""):
+    if remote in {"127.0.0.1", "::1"} and re.fullmatch(r"[0-9A-Fa-f:.]+", forwarded or ""):
         return forwarded
-    return request.remote_addr or "local"
+    return remote or "local"
 
 
 def _prune_failures(attempts, now):
@@ -224,7 +236,7 @@ def clear_login_failures(address, identifiant):
 def dummy_password_hash():
     global _dummy_password_hash
     if _dummy_password_hash is None:
-        _dummy_password_hash = generate_password_hash("aubm-not-a-password")
+        _dummy_password_hash = hash_password("aubm-not-a-password")
     return _dummy_password_hash
 
 
@@ -767,20 +779,20 @@ def clean_password(value, required=False):
 
 
 def ensure_admin(conn):
-    username = clean_login(os.environ.get("AUBM_ADMIN_USER", "admin"))
-    password = os.environ.get("AUBM_ADMIN_PASSWORD", "")
-    if len(password) < 8:
-        raise ApiError("AUBM_ADMIN_PASSWORD est absent.", 500)
     with conn.cursor() as cur:
         cur.execute("SELECT COUNT(*) AS n FROM utilisateurs")
         if cur.fetchone()["n"]:
             return
+        username = clean_login(os.environ.get("AUBM_ADMIN_USER", "admin"))
+        password = os.environ.get("AUBM_ADMIN_PASSWORD", "")
+        if len(password) < 8:
+            raise ApiError("AUBM_ADMIN_PASSWORD est absent.", 500)
         cur.execute(
             """
             INSERT INTO utilisateurs (identifiant, nom, mot_de_passe, role, actif)
             VALUES (%s, %s, %s, 'admin', 1)
             """,
-            (username, "Administrateur", generate_password_hash(password)),
+            (username, "Administrateur", hash_password(password)),
         )
 
 
@@ -912,7 +924,7 @@ def create_user():
                 INSERT INTO utilisateurs (identifiant, nom, mot_de_passe, role, actif)
                 VALUES (%s, %s, %s, %s, 1)
                 """,
-                (identifiant, nom, generate_password_hash(password), role),
+                (identifiant, nom, hash_password(password), role),
             )
             cur.execute(
                 """
@@ -967,7 +979,7 @@ def update_user(user_id):
                        SET nom = %s, role = %s, actif = %s, mot_de_passe = %s
                      WHERE id = %s
                     """,
-                    (nom, role, int(actif), generate_password_hash(password), user_id),
+                    (nom, role, int(actif), hash_password(password), user_id),
                 )
             else:
                 cur.execute(
@@ -1394,8 +1406,6 @@ def main():
         raise SystemExit("AUBM_DB_PASSWORD est absent.")
     if not os.environ.get("AUBM_SECRET"):
         raise SystemExit("AUBM_SECRET est absent.")
-    if not os.environ.get("AUBM_ADMIN_PASSWORD"):
-        raise SystemExit("AUBM_ADMIN_PASSWORD est absent.")
     configure_session()
     try:
         with connection() as conn:
