@@ -171,10 +171,6 @@ else
   if ! grep -q '^AUBM_ADMIN_USER=' "$ENV_FILE"; then
     echo "AUBM_ADMIN_USER=admin" >> "$ENV_FILE"
   fi
-  if ! grep -q '^AUBM_ADMIN_PASSWORD=' "$ENV_FILE"; then
-    echo "AUBM_ADMIN_PASSWORD=Aubm_$(openssl rand -hex 8)" >> "$ENV_FILE"
-    NEW_ADMIN=1
-  fi
 fi
 
 set -a
