@@ -1,7 +1,7 @@
 import {
   esc, safeSwatch, isLocal, isAntenne, tonerLevels, kitLevels, statut, statutLabel,
   motifs, fabricant, filtrer, trier, parDepartement, resume, toCsv, formatDate, formatDateCourt,
-  readableSupplyName,
+  readableSupplyName, composeObservation,
 } from "./logic.js";
 import { buildPdf } from "./pdf.js";
 
@@ -73,16 +73,21 @@ async function refresh() {
   if (!Array.isArray(printers.printers) || !Array.isArray(journal.entries) || !Array.isArray(places.departements)) {
     throw new Error("Réponse du serveur inattendue.");
   }
-  state.printers = printers.printers;
+  state.printers = printers.printers.map(withObservation);
   state.journal = journal.entries;
   state.places = places.departements;
   state.error = "";
 }
 
+function withObservation(printer) {
+  return { ...printer, observation: composeObservation(printer.observation, printer) };
+}
+
 function replacePrinter(printer) {
-  const index = state.printers.findIndex((item) => item.id === printer.id);
-  if (index === -1) state.printers.push(printer);
-  else state.printers[index] = printer;
+  const next = withObservation(printer);
+  const index = state.printers.findIndex((item) => item.id === next.id);
+  if (index === -1) state.printers.push(next);
+  else state.printers[index] = next;
 }
 
 function uid(prefix) {
@@ -695,8 +700,9 @@ function ficheHtml(id) {
           </div>
           <p class="fine ip-local span2" ${hasIp ? "hidden" : ""}>Sans adresse IP, la machine est enregistrée comme poste local.</p>
           <label class="field span2">Observation
-            <textarea name="observation" rows="3" placeholder="RAS ou le remplacement à prévoir">${esc(printer.observation || "")}</textarea>
+            <textarea name="observation" rows="6" placeholder="RAS ou le remplacement à prévoir">${esc(printer.observation || "")}</textarea>
           </label>
+          <p class="fine span2">Un toner ou un kit à 10 % ou moins est noté ici comme épuisé, à remplacer par un neuf. Un nom qui indique usagé ou contrefaçon est signalé aussi.</p>
         </div>
       </section>
       <section class="card span2">
@@ -943,7 +949,7 @@ function readPrinter(form, previous) {
     couleur: data.get("couleur") === "on",
     fourniture: brands.join(", ") || previous?.fourniture || "",
     snmpCommunaute: String(data.get("snmpCommunaute") || "").trim() || "public",
-    observation: String(data.get("observation") || "").trim() || "RAS",
+    observation: composeObservation(String(data.get("observation") || ""), { cartouches: cartouches.rows, kits }),
     cartouches: cartouches.rows,
     kits,
     releve: "",
@@ -1434,6 +1440,7 @@ function addDraftToner() {
   form.draftType.value = "";
   form.draftNiveau.value = "";
   showFormError(form, "");
+  refreshObservation(form);
   list.lastElementChild?.scrollIntoView({ block: "nearest" });
   form.draftMarque.focus();
 }
@@ -1458,8 +1465,36 @@ function addDraftKit() {
   form.draftKit.value = "";
   form.draftKitLevel.value = "";
   showFormError(form, "");
+  refreshObservation(form);
   list.lastElementChild?.scrollIntoView({ block: "nearest" });
   form.draftKit.focus();
+}
+
+function formSupplies(form) {
+  const cartouches = [];
+  for (const row of form.querySelectorAll(".cartouche-row")) {
+    const marque = row.querySelector('[name="cartoucheMarque"]')?.value.trim() || "";
+    const type = row.querySelector('[name="cartoucheType"]')?.value.trim() || "";
+    const raw = row.querySelector('[name="cartoucheNiveau"]')?.value.trim() || "";
+    if (!marque && !type) continue;
+    const value = raw === "" || Number.isNaN(Number(raw)) ? null : Math.max(0, Math.min(100, Math.round(Number(raw))));
+    cartouches.push({ marque, type: type || marque, value });
+  }
+  const kits = [...form.querySelectorAll("#kits .kit-row")].map((row) => {
+    const label = row.querySelector('[name="kitLabel"]')?.value.trim() || "";
+    const raw = row.querySelector('[name="kitLevel"]')?.value.trim() || "";
+    if (!label) return null;
+    const level = raw === "" || Number.isNaN(Number(raw)) ? null : Math.max(0, Math.min(100, Math.round(Number(raw))));
+    return { label, level };
+  }).filter(Boolean);
+  return { cartouches, kits };
+}
+
+function refreshObservation(form) {
+  const area = form?.querySelector('[name="observation"]');
+  if (!area) return;
+  const next = composeObservation(area.value, formSupplies(form));
+  if (area.value !== next) area.value = next;
 }
 
 function isIpv4(value) {
@@ -1663,7 +1698,9 @@ function onClick(event) {
   }
   if (action === "remove-toner") {
     event.preventDefault();
+    const form = actionNode.closest("form");
     actionNode.closest(".cartouche-row")?.remove();
+    refreshObservation(form);
     return;
   }
   if (action === "clear-filters") {
@@ -1763,7 +1800,9 @@ function onClick(event) {
   }
   if (action === "remove-kit") {
     event.preventDefault();
+    const form = actionNode.closest("form");
     actionNode.closest(".kit-row")?.remove();
+    refreshObservation(form);
     return;
   }
   if (action === "delete") {
@@ -1860,6 +1899,10 @@ function onInput(event) {
     const fill = gauge?.querySelector(".fill");
     if (fill) fill.style.width = `${field.value === "" ? 0 : field.value}%`;
     gauge?.classList.toggle("is-empty", field.value === "");
+    return;
+  }
+  if (field.form?.id === "printer-form" && ["cartoucheMarque", "cartoucheType", "cartoucheNiveau", "kitLabel", "kitLevel"].includes(field.name)) {
+    refreshObservation(field.form);
     return;
   }
   if (field.dataset.filter === "q") {
@@ -2001,6 +2044,7 @@ async function lireSnmpForm() {
     });
     mergeSupplyRows(document.getElementById("cartouches"), data.cartouches || [], "type", (item) => cartoucheRow(item, true));
     mergeSupplyRows(document.getElementById("kits"), data.kits || [], "label", (item) => kitRow(item.label, item.level, true));
+    refreshObservation(form);
     showFormError(form, "");
     toast(data.message || "Niveaux lus.");
   } catch (err) {

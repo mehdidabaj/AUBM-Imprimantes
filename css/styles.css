@@ -177,7 +177,7 @@ code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.86em;
 .urgent li:first-child a { border-top: 0; }
 .who { display: grid; }
 .who small, .why, .fine, .hint, .muted { color: var(--soft); }
-.why { font-size: 0.92rem; }
+.why { font-size: 0.92rem; white-space: pre-line; }
 
 .pill {
   display: inline-flex;

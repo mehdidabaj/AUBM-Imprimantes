@@ -14,6 +14,7 @@ import {
   toCsv,
   tonerLevels,
   trier,
+  composeObservation,
 } from "../js/logic.js";
 import { buildPdf } from "../js/pdf.js";
 
@@ -96,6 +97,32 @@ assert.equal(esc(`<img alt="x" src='y'>&`), "&lt;img alt=&quot;x&quot; src=&#39;
 assert.equal(readableSupplyName("4E 6F 69 72"), "Noir");
 assert.equal(readableSupplyName("Toner noir"), "Toner noir");
 assert.equal(readableSupplyName("ZZ"), "ZZ");
+
+assert.equal(
+  composeObservation("RAS", machine({ noir: 10 })),
+  "Noir : épuisé, à remplacer par un neuf.",
+);
+assert.equal(composeObservation("RAS", machine({ noir: 11 })), "RAS");
+assert.equal(
+  composeObservation("Bruit au démarrage", {
+    observation: "Bruit au démarrage",
+    cartouches: [{ marque: "HP", type: "Toner noir", value: 8 }],
+    kits: [
+      { label: "Kit de fusion usagé", level: 40 },
+      { label: "Tambour contrefacon", level: 70 },
+    ],
+  }),
+  [
+    "Bruit au démarrage",
+    "HP Toner noir : épuisé, à remplacer par un neuf.",
+    "Kit de fusion usagé : usagé.",
+    "Tambour contrefacon : contrefaçon.",
+  ].join("\n"),
+);
+assert.equal(
+  composeObservation("Noir : épuisé, à remplacer par un neuf.\nVérifier le bac", machine({ noir: 80 })),
+  "Vérifier le bac",
+);
 
 assert.equal(formatDateCourt(new Date("2026-11-13T23:30:00Z")), "13/11/2026");
 assert.equal(formatDateCourt(new Date("2026-07-13T23:30:00Z")), "14/07/2026");
