@@ -28,6 +28,7 @@ const state = {
   users: null,
   places: [],
   toast: "",
+  releve: null,
 };
 
 const TONER_SWATCHES = ["#5b4636", "#6e4b86", "#2f6f5e", "#8d5a22", "#3e5278", "#7a3e4a"];
@@ -204,7 +205,7 @@ function topbarHtml() {
       <p>${esc(sub)}</p>
     </div>
     <div class="top-actions">
-      ${canManage() && current.name === "parc" ? `<button class="btn" type="button" data-action="relever-parc">Lire les IP</button>` : ""}
+      ${canManage() && current.name === "parc" ? `<button class="btn" type="button" data-action="relever-parc" ${state.busy ? "disabled" : ""}>Lire les IP</button>` : ""}
       ${canManage() ? `<a class="btn btn-primary" href="#/imprimante/nouveau">Ajouter</a>` : ""}
       <button class="btn" type="button" data-action="export">CSV</button>
       <button class="btn" type="button" data-action="export-pdf">PDF</button>
@@ -336,6 +337,7 @@ function urgentRow(printer) {
 
 function parcHtml() {
   return `
+    ${releveHtml()}
     <section class="filters">
       <label class="search">
         <span class="sr">Recherche</span>
@@ -1489,19 +1491,83 @@ async function releverPrinter(id) {
   }
 }
 
+function releveHtml() {
+  const report = state.releve;
+  if (!report) return "";
+  const running = Boolean(report.current);
+  const done = report.ok.length + report.failed.length;
+  let titre = "Lecture réussie";
+  let detail = `${report.ok.length} imprimante${report.ok.length > 1 ? "s" : ""} lue${report.ok.length > 1 ? "s" : ""}.`;
+  if (running) {
+    titre = "Lecture en cours";
+    detail = `${report.current} · ${done} sur ${report.total}`;
+  } else if (report.failed.length && report.ok.length) {
+    titre = "Lecture incomplète";
+    detail = `${report.ok.length} imprimante${report.ok.length > 1 ? "s" : ""} lue${report.ok.length > 1 ? "s" : ""}, ${report.failed.length} non lue${report.failed.length > 1 ? "s" : ""}.`;
+  } else if (report.failed.length) {
+    titre = "Lecture échouée";
+    detail = `${report.failed.length} imprimante${report.failed.length > 1 ? "s" : ""} non lue${report.failed.length > 1 ? "s" : ""}.`;
+  }
+  const okItems = report.ok.map((item) => `
+    <li>
+      <a href="#/imprimante/${esc(item.id)}">${esc(item.nom)}</a>
+      <small>${esc(item.adresse)}</small>
+    </li>`).join("");
+  const failItems = report.failed.map((item) => `
+    <li>
+      <a href="#/imprimante/${esc(item.id)}">${esc(item.nom)}</a>
+      <small>${esc(item.adresse)} · ${esc(item.message)}</small>
+    </li>`).join("");
+  const failBlock = report.failed.length ? `
+    <div class="releve-fail">
+      <h3>Imprimantes non lues (${report.failed.length})</h3>
+      <ul>${failItems}</ul>
+    </div>` : "";
+  return `
+    <section class="card releve-report" role="status">
+      <header class="releve-head">
+        <div>
+          <h2>${esc(titre)}</h2>
+          <p>${esc(detail)}</p>
+        </div>
+        ${running ? "" : `<button class="btn ghost" type="button" data-action="dismiss-releve">Fermer</button>`}
+      </header>
+      <div class="releve-columns${failBlock ? "" : " solo"}">
+        <div class="releve-ok">
+          <h3>Imprimantes lues (${report.ok.length})</h3>
+          ${report.ok.length ? `<ul>${okItems}</ul>` : `<p>${running ? "En attente du premier résultat." : "Aucune imprimante lue."}</p>`}
+        </div>
+        ${failBlock}
+      </div>
+    </section>`;
+}
+
+function releveToast(report) {
+  const ok = report.ok.length;
+  const failed = report.failed.length;
+  if (!failed) return `Lecture réussie. ${ok} imprimante${ok > 1 ? "s" : ""} lue${ok > 1 ? "s" : ""}.`;
+  if (!ok) return `Lecture échouée. ${failed} imprimante${failed > 1 ? "s" : ""} non lue${failed > 1 ? "s" : ""}.`;
+  return `Lecture incomplète. ${ok} imprimante${ok > 1 ? "s" : ""} lue${ok > 1 ? "s" : ""}, ${failed} non lue${failed > 1 ? "s" : ""}.`;
+}
+
 async function releverParc() {
   if (state.busy || !canManage()) return;
   const targets = state.printers.filter((printer) => isIpv4(printer.adresse));
   if (!targets.length) {
+    state.releve = null;
+    paint({ preserveScroll: true });
     toast("Aucune adresse IP à interroger.");
     return;
   }
   state.busy = true;
-  let ok = 0;
-  let failed = 0;
-  toast(`Lecture de ${targets.length} adresse${targets.length > 1 ? "s" : ""}…`);
+  const report = { ok: [], failed: [], total: targets.length, current: "" };
+  state.releve = report;
+  let stopped = false;
   try {
     for (const printer of targets) {
+      report.current = printer.nom;
+      if (route().name === "parc") paint({ preserveScroll: true });
+      toast(`Lecture de ${printer.nom} (${report.ok.length + report.failed.length + 1}/${targets.length})…`);
       try {
         const data = await api(`/api/printers/${encodeURIComponent(printer.id)}/relever`, {
           method: "POST",
@@ -1509,17 +1575,28 @@ async function releverParc() {
         });
         replacePrinter(data.printer);
         if (data.entry) state.journal.unshift(data.entry);
-        ok += 1;
+        report.ok.push({ id: printer.id, nom: printer.nom, adresse: printer.adresse });
       } catch (err) {
-        if (sessionLost(err)) return;
-        failed += 1;
+        if (sessionLost(err)) {
+          stopped = true;
+          return;
+        }
+        report.failed.push({
+          id: printer.id,
+          nom: printer.nom,
+          adresse: printer.adresse,
+          message: err.message || "Lecture impossible.",
+        });
       }
     }
   } finally {
     state.busy = false;
-    paint();
+    if (!stopped) {
+      report.current = "";
+      if (route().name === "parc") paint({ preserveScroll: true });
+      toast(releveToast(report));
+    }
   }
-  toast(`${ok} imprimante${ok > 1 ? "s" : ""} lue${ok > 1 ? "s" : ""}${failed ? `, ${failed} sans réponse` : ""}.`);
 }
 
 async function savePlaces(path, method, body, success) {
@@ -1642,6 +1719,12 @@ function onClick(event) {
   if (action === "relever-parc") {
     event.preventDefault();
     releverParc();
+    return;
+  }
+  if (action === "dismiss-releve") {
+    event.preventDefault();
+    state.releve = null;
+    paint({ preserveScroll: true });
     return;
   }
   if (action === "delete-user") {
