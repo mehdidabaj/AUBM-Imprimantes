@@ -39,6 +39,7 @@ async function api(path, { method = "GET", body } = {}) {
       method,
       headers: {
         Accept: "application/json",
+        "X-AUBM-Request": "1",
         ...(body ? { "Content-Type": "application/json" } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
@@ -48,11 +49,18 @@ async function api(path, { method = "GET", body } = {}) {
   }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(data.error || "L'enregistrement a été refusé.");
+    const error = new Error(data.error || serviceDown(response.status));
     error.status = response.status;
     throw error;
   }
   return data;
+}
+
+function serviceDown(status) {
+  if (status === 502 || status === 503 || status === 504) {
+    return "Le service est arrêté. Sur le serveur : sudo systemctl restart aubm-imprimantes";
+  }
+  return `La requête a échoué (${status}).`;
 }
 
 function canManage() {
@@ -172,12 +180,12 @@ function sidebarHtml() {
       ${items.map(([id, label]) => `
         <a href="#/${id}" class="${current === id ? "active" : ""}" ${current === id ? 'aria-current="page"' : ""}>
           <span>${label}</span>
-          ${id === "alertes" ? `<b class="badge">${alerts}</b>` : ""}
+          ${id === "alertes" && alerts ? `<b class="badge">${alerts}</b>` : ""}
         </a>`).join("")}
     </nav>
     <div class="side-foot">
-      <p>${state.printers.length ? `${state.printers.length} machine${state.printers.length > 1 ? "s" : ""} suivie${state.printers.length > 1 ? "s" : ""}` : "Parc vide"}</p>
-      <p>${esc(state.user.nom)} · ${esc(roleLabel(state.user.role))}</p>
+      <p class="side-count">${state.printers.length ? `${state.printers.length} machine${state.printers.length > 1 ? "s" : ""} suivie${state.printers.length > 1 ? "s" : ""}` : "Parc vide"}</p>
+      <p class="side-user"><strong>${esc(state.user.nom)}</strong><span>${esc(roleLabel(state.user.role))}</span></p>
     </div>`;
 }
 
@@ -205,10 +213,12 @@ function topbarHtml() {
     </div>
     <div class="top-actions">
       ${canManage() && current.name === "parc" ? `<button class="btn" type="button" data-action="relever-parc">Lire les IP</button>` : ""}
+      <div class="action-cluster">
+        <button class="btn" type="button" data-action="export">CSV</button>
+        <button class="btn" type="button" data-action="export-pdf">PDF</button>
+      </div>
       ${canManage() ? `<a class="btn btn-primary" href="#/imprimante/nouveau">Ajouter</a>` : ""}
-      <button class="btn" type="button" data-action="export">CSV</button>
-      <button class="btn" type="button" data-action="export-pdf">PDF</button>
-      <button class="btn" type="button" data-action="logout">Quitter</button>
+      <button class="btn ghost" type="button" data-action="logout">Quitter</button>
     </div>`;
 }
 
@@ -217,7 +227,7 @@ function viewHtml() {
     return `<section class="card empty-block"><h2>Chargement du parc…</h2><p>Lecture de la base MySQL.</p></section>`;
   }
   if (state.error) {
-    return `<section class="card empty-block"><h2>Base indisponible</h2><p>${esc(state.error)}</p><button class="btn" type="button" data-action="retry">Réessayer</button></section>`;
+    return `<section class="card empty-block"><h2>Service indisponible</h2><p>${esc(state.error)}</p><button class="btn" type="button" data-action="retry">Réessayer</button></section>`;
   }
   const current = route();
   if (current.name === "tableau") return dashboardHtml();
@@ -234,12 +244,16 @@ function gateHtml() {
     return `<section class="card empty-block"><h2>Chargement du parc…</h2><p>Vérification de la session.</p></section>`;
   }
   if (state.error) {
-    return `<section class="card empty-block"><h2>Base indisponible</h2><p>${esc(state.error)}</p><button class="btn" type="button" data-action="retry">Réessayer</button></section>`;
+    return `<section class="card empty-block"><h2>Service indisponible</h2><p>${esc(state.error)}</p><button class="btn" type="button" data-action="retry">Réessayer</button></section>`;
   }
   return `<section class="login-wrap"><form id="login-form" class="card login-card">
-    <img class="login-logo" src="img/logo-aubm.png" alt="Agence Urbaine de Beni Mellal">
-    <h2>Parc imprimantes</h2>
-    <p class="hint">Entrez votre identifiant pour consulter le parc.</p>
+    <div class="login-brand">
+      <img class="login-logo" src="img/logo-aubm.png" alt="Agence Urbaine de Beni Mellal">
+    </div>
+    <div class="login-copy">
+      <h2>Parc imprimantes</h2>
+      <p class="hint">Identifiez-vous pour consulter les niveaux, les alertes et les exports.</p>
+    </div>
     <label class="field">Identifiant
       <input name="identifiant" autocomplete="username" required>
     </label>
@@ -298,7 +312,7 @@ function dashboardHtml() {
               <button type="button" data-action="filter-dept" data-dept="${esc(row.dept)}">
                 <span>${esc(row.dept)}</span>
                 <span class="bar"><i style="width:${Math.round((row.total / maxDept) * 100)}%"></i></span>
-                <b>${row.alertes ? `${row.alertes} alerte${row.alertes > 1 ? "s" : ""}` : "RAS"}</b>
+                <b class="${row.alertes ? "is-alert" : "is-ok"}">${row.alertes ? `${row.alertes} alerte${row.alertes > 1 ? "s" : ""}` : "RAS"}</b>
                 <small>${row.total}</small>
               </button>
             </li>`).join("") : `<li class="empty">Aucun département.</li>`}
@@ -314,7 +328,7 @@ function dashboardHtml() {
 }
 
 function kpi(label, value, hint, kind, code) {
-  return `<button class="kpi" type="button" data-action="kpi" data-kind="${kind}" data-code="${esc(code)}">
+  return `<button class="kpi ${code ? `kpi-${code}` : "kpi-parc"}" type="button" data-action="kpi" data-kind="${kind}" data-code="${esc(code)}">
     <span>${esc(label)}</span><strong>${value}</strong><small>${esc(hint)}</small>
   </button>`;
 }
@@ -684,11 +698,11 @@ function ficheHtml(id) {
           <label class="check span2"><input type="checkbox" name="aAdresse" ${hasIp ? "checked" : ""}> Cette imprimante a une adresse IP</label>
           <div class="ip-fields span2" ${hasIp ? "" : "hidden"}>
             <label class="field">Adresse IP
-              <input name="adresse" value="${hasIp ? esc(printer.adresse) : ""}" placeholder="195.200.200.12" inputmode="decimal">
+              <input name="adresse" value="${hasIp ? esc(printer.adresse) : ""}" placeholder="195.200.200.12" inputmode="decimal" autocomplete="off">
             </label>
-            <label class="field">Communauté SNMP
-              <input name="snmpCommunaute" value="${esc(printer.snmpCommunaute || "public")}" autocomplete="off">
-            </label>
+            ${manage ? `<label class="field">Communauté SNMP
+              <input name="snmpCommunaute" value="${esc(printer.snmpCommunaute || "public")}" autocomplete="off" spellcheck="false">
+            </label>` : ""}
             ${manage ? `<div class="span2"><button class="btn" type="button" data-action="lire-snmp">Lire les cartouches et les kits</button><p class="fine">La requête SNMP remplit les noms et les niveaux. Vous pouvez les corriger avant d'enregistrer.</p></div>` : ""}
           </div>
           <p class="fine ip-local span2" ${hasIp ? "hidden" : ""}>Sans adresse IP, la machine est enregistrée comme poste local.</p>
@@ -818,7 +832,8 @@ function cartoucheRow(item, editable = true) {
     type = marque;
     marque = "";
   }
-  return `<div class="supply-grid cartouche-row" data-key="${esc(item.key || "")}" data-swatch="${esc(item.swatch || "")}">
+  const tone = item.swatch ? safeSwatch(item.swatch) : "";
+  return `<div class="supply-grid cartouche-row" data-key="${esc(item.key || "")}" data-swatch="${esc(tone)}">
     <input name="cartoucheMarque" value="${esc(marque)}" placeholder="Marque" aria-label="Marque de la cartouche">
     <input name="cartoucheType" value="${esc(type)}" placeholder="Nom de la cartouche" aria-label="Nom de la cartouche">
     <input name="cartoucheNiveau" type="number" min="0" max="100" value="${hasLevel ? Number(item.value) : ""}" placeholder="%" aria-label="Pourcentage de la cartouche">

@@ -42,6 +42,21 @@ class IntegrityTests(unittest.TestCase):
         self.assertNotIn("exemple-uniquement", stored)
 
 
+class SessionTests(unittest.TestCase):
+    def test_password_change_moves_the_stamp(self):
+        first = api.credential_stamp(api.hash_password("mot-de-passe-un"))
+        second = api.credential_stamp(api.hash_password("mot-de-passe-deux"))
+        self.assertNotEqual(first, second)
+        self.assertNotIn("mot-de-passe-un", first)
+
+    def test_consultation_does_not_receive_the_snmp_community(self):
+        printer = {"id": "imp-1", "nom": "HP", "snmpCommunaute": "bureau-secret"}
+        hidden = api.present_printer(printer, admin=False)
+        self.assertNotIn("snmpCommunaute", hidden)
+        self.assertEqual(printer["snmpCommunaute"], "bureau-secret")
+        self.assertEqual(api.present_printer(printer, admin=True)["snmpCommunaute"], "bureau-secret")
+
+
 class AddressTests(unittest.TestCase):
     def test_printer_networks_stay_allowed(self):
         self.assertTrue(queryable_ipv4("192.168.1.20"))
@@ -77,7 +92,7 @@ class LoginLimitTests(unittest.TestCase):
         return self.client.post(
             "/api/login",
             json={"identifiant": "admin", "motDePasse": "mauvais-mot"},
-            headers={"X-Real-IP": address},
+            headers={"X-Real-IP": address, "X-AUBM-Request": "1"},
         )
 
     def test_repeated_failures_are_limited(self):
@@ -92,9 +107,17 @@ class LoginLimitTests(unittest.TestCase):
         response = self.client.post(
             "/api/login",
             data={"identifiant": "admin", "motDePasse": "secret"},
-            headers={"X-Real-IP": "203.0.113.9"},
+            headers={"X-Real-IP": "203.0.113.9", "X-AUBM-Request": "1"},
         )
         self.assertEqual(response.status_code, 415)
+
+    def test_write_without_the_app_header_is_refused(self):
+        response = self.client.post(
+            "/api/login",
+            json={"identifiant": "admin", "motDePasse": "secret"},
+            headers={"X-Real-IP": "203.0.113.12"},
+        )
+        self.assertEqual(response.status_code, 403)
 
     def test_other_address_is_not_blocked_by_the_first(self):
         for _ in range(api.LOGIN_LIMIT):

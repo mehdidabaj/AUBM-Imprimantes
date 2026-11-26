@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """API MySQL du parc d'imprimantes AUBM."""
 
+import hashlib
 import logging
 import os
 import re
@@ -12,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pymysql
-from flask import Flask, jsonify, request, session
+from flask import Flask, g, jsonify, request, session
 from pymysql.err import IntegrityError, MySQLError
 from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -66,6 +67,7 @@ SWATCH_RE = re.compile(r"#[0-9A-Fa-f]{3,8}")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 app = Flask(__name__)
 app.config.update(
+    SESSION_COOKIE_NAME="aubm_session",
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.environ.get("AUBM_COOKIE_SECURE", "") == "1",
@@ -733,19 +735,33 @@ def public_user(row):
     return user
 
 
+def credential_stamp(password_hash):
+    return hashlib.sha256(password_hash.encode("utf-8")).hexdigest()[:24]
+
+
+def present_printer(printer, admin):
+    if admin:
+        return printer
+    shown = dict(printer)
+    shown.pop("snmpCommunaute", None)
+    return shown
+
+
 def session_user(conn):
     user_id = session.get("user_id")
-    if not user_id:
+    stamp = session.get("cred")
+    if not user_id or not stamp:
         return None
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT id, identifiant, nom, role, actif FROM utilisateurs WHERE id = %s",
+            "SELECT id, identifiant, nom, role, actif, mot_de_passe FROM utilisateurs WHERE id = %s",
             (user_id,),
         )
         row = cur.fetchone()
-    if not row or not row["actif"]:
+    if not row or not row["actif"] or credential_stamp(row["mot_de_passe"]) != stamp:
         session.clear()
         return None
+    row.pop("mot_de_passe", None)
     return row
 
 
@@ -756,6 +772,7 @@ def require_user():
     user = run(read)
     if not user:
         raise ApiError("Connexion requise.", 401)
+    g.user = user
     return user
 
 
@@ -833,9 +850,11 @@ def payload():
 
 @app.before_request
 def reject_non_json_writes():
-    if request.method not in {"POST", "PUT", "PATCH"} or not request.path.startswith("/api/"):
+    if request.method not in {"POST", "PUT", "PATCH", "DELETE"} or not request.path.startswith("/api/"):
         return None
-    if not request.content_length:
+    if request.headers.get("X-AUBM-Request") != "1":
+        return jsonify(error="Requête refusée."), 403
+    if request.method == "DELETE" or not request.content_length:
         return None
     if request.is_json:
         return None
@@ -900,6 +919,7 @@ def login():
     clear_login_failures(address, identifiant)
     session.clear()
     session["user_id"] = row["id"]
+    session["cred"] = credential_stamp(row["mot_de_passe"])
     session.permanent = True
     return jsonify(public_user(row))
 
@@ -1068,7 +1088,8 @@ def delete_user(user_id):
 def list_printers():
     def read(conn):
         with conn.cursor() as cur:
-            return {"printers": load_printers(cur)}
+            admin = getattr(g, "user", None) and g.user.get("role") == "admin"
+            return {"printers": [present_printer(printer, admin) for printer in load_printers(cur)]}
 
     return jsonify(run(read))
 
