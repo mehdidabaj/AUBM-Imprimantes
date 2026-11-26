@@ -49,11 +49,18 @@ async function api(path, { method = "GET", body } = {}) {
   }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(data.error || "L'enregistrement a été refusé.");
+    const error = new Error(data.error || serviceDown(response.status));
     error.status = response.status;
     throw error;
   }
   return data;
+}
+
+function serviceDown(status) {
+  if (status === 502 || status === 503 || status === 504) {
+    return "Le service est arrêté. Sur le serveur : sudo systemctl restart aubm-imprimantes";
+  }
+  return `La requête a échoué (${status}).`;
 }
 
 function canManage() {
@@ -220,7 +227,7 @@ function viewHtml() {
     return `<section class="card empty-block"><h2>Chargement du parc…</h2><p>Lecture de la base MySQL.</p></section>`;
   }
   if (state.error) {
-    return `<section class="card empty-block"><h2>Base indisponible</h2><p>${esc(state.error)}</p><button class="btn" type="button" data-action="retry">Réessayer</button></section>`;
+    return `<section class="card empty-block"><h2>Service indisponible</h2><p>${esc(state.error)}</p><button class="btn" type="button" data-action="retry">Réessayer</button></section>`;
   }
   const current = route();
   if (current.name === "tableau") return dashboardHtml();
@@ -237,7 +244,7 @@ function gateHtml() {
     return `<section class="card empty-block"><h2>Chargement du parc…</h2><p>Vérification de la session.</p></section>`;
   }
   if (state.error) {
-    return `<section class="card empty-block"><h2>Base indisponible</h2><p>${esc(state.error)}</p><button class="btn" type="button" data-action="retry">Réessayer</button></section>`;
+    return `<section class="card empty-block"><h2>Service indisponible</h2><p>${esc(state.error)}</p><button class="btn" type="button" data-action="retry">Réessayer</button></section>`;
   }
   return `<section class="login-wrap"><form id="login-form" class="card login-card">
     <div class="login-brand">

@@ -35,12 +35,21 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 30s;
+        proxy_intercept_errors on;
+        error_page 502 504 = @api_down;
         add_header Cache-Control "no-store" always;
         add_header X-Content-Type-Options nosniff always;
         add_header X-Frame-Options DENY always;
         add_header Referrer-Policy strict-origin-when-cross-origin always;
         add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
         add_header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'" always;
+    }
+
+    location @api_down {
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        add_header X-Content-Type-Options nosniff always;
+        return 503 '{"error":"Le service est arrêté."}';
     }
 
     location / {
