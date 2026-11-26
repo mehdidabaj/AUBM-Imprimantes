@@ -79,6 +79,83 @@ export function kitLevels(printer) {
   return (printer.kits || []).filter((kit) => kit.level !== null && kit.level !== undefined && kit.level !== "");
 }
 
+const OBSERVATION_TAILS = [
+  " : épuisé, à remplacer par un neuf.",
+  " : usagé.",
+  " : contrefaçon.",
+];
+
+function foldSupply(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function supplyLabel(marque, name) {
+  const brand = readableSupplyName(marque).replace(/\s+/g, " ").trim();
+  const title = readableSupplyName(name).replace(/\s+/g, " ").trim();
+  if (brand && title && !title.toLowerCase().includes(brand.toLowerCase())) return `${brand} ${title}`;
+  return title || brand;
+}
+
+function supplyFlags(label) {
+  const text = foldSupply(label);
+  return {
+    usage: /(^|[^a-z])(usagee?|used)([^a-z]|$)/.test(text),
+    fake: /(^|[^a-z])contrefa/.test(text) || /(^|[^a-z])counterfeit([^a-z]|$)/.test(text) || /non[-\s]?genuine/.test(text),
+  };
+}
+
+function notedSupplies(printer) {
+  const toners = Array.isArray(printer.cartouches) && printer.cartouches.length
+    ? printer.cartouches.map((item) => ({
+      label: supplyLabel(item.marque, item.nom || item.type || item.label),
+      level: item.value,
+    }))
+    : tonerLevels(printer).map((item) => ({ label: item.label, level: item.value }));
+  const kits = (printer.kits || []).map((kit) => ({
+    label: supplyLabel("", kit.label),
+    level: kit.level,
+  }));
+  return [...toners, ...kits];
+}
+
+export function autoObservationLines(printer) {
+  const lines = [];
+  for (const item of notedSupplies(printer)) {
+    const label = item.label;
+    if (!label) continue;
+    const level = Number(item.level);
+    const flags = supplyFlags(label);
+    if (item.level !== null && item.level !== undefined && item.level !== "" && Number.isFinite(level) && level <= 10) {
+      lines.push(`${label}${OBSERVATION_TAILS[0]}`);
+    }
+    if (flags.usage) lines.push(`${label}${OBSERVATION_TAILS[1]}`);
+    if (flags.fake) lines.push(`${label}${OBSERVATION_TAILS[2]}`);
+  }
+  return lines;
+}
+
+export function composeObservation(text, printer) {
+  const manual = String(text ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !OBSERVATION_TAILS.some((tail) => line.endsWith(tail)));
+  const kept = manual.filter((line) => line.toUpperCase() !== "RAS");
+  const auto = autoObservationLines(printer);
+  let result = "RAS";
+  if (!auto.length) result = kept.join("\n") || "RAS";
+  else if (!kept.length) result = auto.join("\n");
+  else result = `${kept.join("\n")}\n${auto.join("\n")}`;
+  if (result.length <= 2000) return result;
+  const autoText = auto.join("\n");
+  if (!auto.length || autoText.length >= 2000) return (autoText || result).slice(0, 2000);
+  const room = 2000 - autoText.length - 1;
+  const head = kept.join("\n").slice(0, room).trim();
+  return head ? `${head}\n${autoText}` : autoText.slice(0, 2000);
+}
+
 export function observationOuverte(printer) {
   const text = (printer.observation || "").trim();
   return text.length > 0 && text.toUpperCase() !== "RAS";

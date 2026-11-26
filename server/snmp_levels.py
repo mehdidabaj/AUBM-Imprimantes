@@ -72,17 +72,46 @@ def parse_walk(text):
         rows.setdefault(index, {})[int(column)] = decode_value(raw)
     supplies = []
     for index, columns in rows.items():
-        kind = columns.get(5)
-        if isinstance(kind, str) and kind.isdigit():
-            kind = int(kind)
+        kind, description, maximum, level = supply_fields(columns)
         supplies.append({
             "index": index,
-            "type": kind if isinstance(kind, int) else None,
-            "description": str(columns.get(6) or "").strip(),
-            "maximum": columns.get(8) if isinstance(columns.get(8), int) else None,
-            "level": columns.get(9) if isinstance(columns.get(9), int) else None,
+            "type": kind,
+            "description": description,
+            "maximum": maximum,
+            "level": level,
         })
     return supplies
+
+
+def as_supply_type(value):
+    if isinstance(value, str) and value.isdigit():
+        value = int(value)
+    if isinstance(value, int) and 1 <= value <= 40:
+        return value
+    return None
+
+
+def supply_fields(columns):
+    """Deux dispositions existent sur le parc.
+
+    La MIB imprimante (RFC 3805) met le type en colonne 4, le nom en 5,
+    le maximum en 7 et le niveau en 8. Certains modèles déjà lus placent
+    ces mêmes valeurs en 5, 6, 8 et 9.
+    """
+    standard_type = as_supply_type(columns.get(4))
+    if standard_type is not None and isinstance(columns.get(5), str):
+        return (
+            standard_type,
+            str(columns.get(5) or "").strip(),
+            columns.get(7) if isinstance(columns.get(7), int) else None,
+            columns.get(8) if isinstance(columns.get(8), int) else None,
+        )
+    return (
+        as_supply_type(columns.get(5)),
+        str(columns.get(6) or "").strip(),
+        columns.get(8) if isinstance(columns.get(8), int) else None,
+        columns.get(9) if isinstance(columns.get(9), int) else None,
+    )
 
 
 def decode_value(raw):
@@ -291,21 +320,31 @@ def query_supplies(host, community):
     if shutil.which("snmpwalk") is None:
         raise SnmpError("Le relevé SNMP n'est pas disponible sur le serveur.")
     try:
-        completed = subprocess.run(
-            [
-                "snmpwalk", "-v2c", "-c", community, "-Oqn", "-t", "2", "-r", "0",
-                host, "1.3.6.1.2.1.43.11.1.1",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=8,
-            check=False,
-        )
+        completed = _walk(host, community, "2c")
     except subprocess.TimeoutExpired as exc:
         raise SnmpError("L'imprimante ne répond pas au relevé SNMP.") from exc
+    supplies = parse_walk(completed.stdout)
+    if not supplies and completed.returncode != 0:
+        try:
+            completed = _walk(host, community, "1")
+        except subprocess.TimeoutExpired as exc:
+            raise SnmpError("L'imprimante ne répond pas au relevé SNMP.") from exc
+        supplies = parse_walk(completed.stdout)
     if completed.returncode != 0 and not completed.stdout.strip():
         raise SnmpError("L'imprimante ne répond pas au relevé SNMP. Vérifiez l'adresse IP et la communauté.")
-    supplies = parse_walk(completed.stdout)
     if not supplies:
         raise SnmpError("Aucun consommable n'a été lu sur cette imprimante.")
     return supplies
+
+
+def _walk(host, community, version):
+    return subprocess.run(
+        [
+            "snmpwalk", f"-v{version}", "-c", community, "-Oqn", "-t", "3", "-r", "1",
+            host, "1.3.6.1.2.1.43.11.1.1",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=12,
+        check=False,
+    )

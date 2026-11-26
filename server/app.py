@@ -7,6 +7,7 @@ import re
 import secrets
 import threading
 import time
+import unicodedata
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -357,6 +358,90 @@ def toners_from_cartouches(items):
     return toners
 
 
+OBSERVATION_TAILS = (
+    " : épuisé, à remplacer par un neuf.",
+    " : usagé.",
+    " : contrefaçon.",
+)
+
+
+def fold_supply(value):
+    text = unicodedata.normalize("NFD", "" if value is None else str(value))
+    text = "".join(char for char in text if unicodedata.category(char) != "Mn")
+    return text.casefold()
+
+
+def supply_label(marque, name):
+    brand = re.sub(r"\s+", " ", "" if marque is None else str(marque)).strip()
+    title = re.sub(r"\s+", " ", "" if name is None else str(name)).strip()
+    if brand and title and brand.casefold() not in title.casefold():
+        return f"{brand} {title}"
+    return title or brand
+
+
+def supply_flags(label):
+    text = fold_supply(label)
+    usage = re.search(r"(^|[^a-z])(usagee?|used)([^a-z]|$)", text) is not None
+    fake = (
+        re.search(r"(^|[^a-z])contrefa", text) is not None
+        or re.search(r"(^|[^a-z])counterfeit([^a-z]|$)", text) is not None
+        or re.search(r"non[-\s]?genuine", text) is not None
+    )
+    return usage, fake
+
+
+def auto_observation_lines(parts):
+    lines = []
+    for label, level in parts:
+        label = supply_label("", label)
+        if not label:
+            continue
+        usage, fake = supply_flags(label)
+        if isinstance(level, int) and level <= 10:
+            lines.append(f"{label}{OBSERVATION_TAILS[0]}")
+        if usage:
+            lines.append(f"{label}{OBSERVATION_TAILS[1]}")
+        if fake:
+            lines.append(f"{label}{OBSERVATION_TAILS[2]}")
+    return lines
+
+
+def compose_observation(text, parts):
+    manual = []
+    for line in str(text or "").splitlines():
+        line = line.strip()
+        if not line or any(line.endswith(tail) for tail in OBSERVATION_TAILS):
+            continue
+        manual.append(line)
+    kept = [line for line in manual if line.casefold() != "ras"]
+    auto = auto_observation_lines(parts)
+    if not auto:
+        result = "\n".join(kept) or "RAS"
+    elif not kept:
+        result = "\n".join(auto)
+    else:
+        result = "\n".join([*kept, *auto])
+    if len(result) <= 2000:
+        return result
+    auto_text = "\n".join(auto)
+    if not auto or len(auto_text) >= 2000:
+        return (auto_text or result)[:2000]
+    head = "\n".join(kept)[: 2000 - len(auto_text) - 1].strip()
+    return f"{head}\n{auto_text}" if head else auto_text[:2000]
+
+
+def observation_parts(toners, kits):
+    parts = []
+    for toner in toners or []:
+        parts.append((
+            supply_label(toner.get("marque"), toner.get("libelle") or toner.get("genre")),
+            toner.get("pourcentage"),
+        ))
+    for kit in kits or []:
+        parts.append((kit.get("libelle") or "", kit.get("pourcentage")))
+    return parts
+
+
 def normalize(raw, forced_id=None):
     if not isinstance(raw, dict):
         raise ApiError("Fiche invalide.", 400)
@@ -409,6 +494,7 @@ def normalize(raw, forced_id=None):
         })
     printer["toners"] = toners
     printer["kits"] = kits
+    printer["observation"] = compose_observation(printer["observation"], observation_parts(toners, kits))
     return printer
 
 
@@ -643,6 +729,23 @@ def assemble(row, toners, kits):
         }
         for toner in toners
     ]
+    printer["observation"] = compose_observation(
+        printer["observation"],
+        observation_parts(
+            [
+                {
+                    "marque": item.get("marque") or "",
+                    "libelle": item.get("type") or "",
+                    "pourcentage": item.get("value"),
+                }
+                for item in printer["cartouches"]
+            ],
+            [
+                {"libelle": kit.get("label") or "", "pourcentage": kit.get("level")}
+                for kit in printer["kits"]
+            ],
+        ),
+    )
     return printer
 
 

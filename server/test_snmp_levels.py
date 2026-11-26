@@ -132,6 +132,28 @@ class SnmpLevelsTest(unittest.TestCase):
         self.assertEqual(reading["cartouches"][1]["value"], 25)
         self.assertEqual(reading["kits"], [{"label": "Kit de fusion", "level": 25}])
 
+    def test_standard_mib_columns_are_read(self):
+        walk = """
+.1.3.6.1.2.1.43.11.1.1.4.1.1 21
+.1.3.6.1.2.1.43.11.1.1.5.1.1 "Toner noir"
+.1.3.6.1.2.1.43.11.1.1.6.1.1 19
+.1.3.6.1.2.1.43.11.1.1.7.1.1 100
+.1.3.6.1.2.1.43.11.1.1.8.1.1 12
+.1.3.6.1.2.1.43.11.1.1.4.1.2 15
+.1.3.6.1.2.1.43.11.1.1.5.1.2 "Kit de fusion"
+.1.3.6.1.2.1.43.11.1.1.7.1.2 100
+.1.3.6.1.2.1.43.11.1.1.8.1.2 40
+"""
+        reading = named_supplies(parse_walk(walk))
+        self.assertEqual(reading["cartouches"], [{
+            "marque": "",
+            "nom": "Toner noir",
+            "type": "Toner noir",
+            "value": 12,
+            "swatch": "#2b3038",
+        }])
+        self.assertEqual(reading["kits"], [{"label": "Kit de fusion", "level": 40}])
+
     def test_unknown_level_is_ignored(self):
         self.assertIsNone(percentage(-3, 100))
         self.assertIsNone(percentage(None, 100))
